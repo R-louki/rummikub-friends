@@ -31,10 +31,6 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Run Unit Tests (Rules, Audio Ducking, Network)
-        working-directory: ./android
-        run: gradle :core-model:test :core-engine:test :core-network:test :core-audio:test --no-daemon
-
       - name: Build Debug APK
         working-directory: ./android
         run: gradle :app:assembleDebug --no-daemon
@@ -45,3 +41,12 @@ jobs:
           name: Rummikub-Friends-Debug.apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
+      - name: Run Unit Tests (Rules, Audio Ducking, Network)
+        working-directory: ./android
+        run: gradle :core-model:test :core-engine:test :core-network:test :core-audio:test --no-daemon
+
+      - name: Dump Test Failure Details
+        if: failure()
+        run: |
+          find android -path "*/test-results/*/*.xml" -exec echo "FILE: {}" \; -exec cat {} \;
