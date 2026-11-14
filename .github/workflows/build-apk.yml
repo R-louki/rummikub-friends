@@ -36,13 +36,7 @@ jobs:
 
       - name: Build Debug APK
         working-directory: ./android
-        run: |
-          gradle :app:assembleDebug --stacktrace --no-daemon > build_out.txt 2>&1 || {
-            ERR=$(grep -A 4 -E 'What went wrong|Execution failed|Caused by' build_out.txt | tr '\n' ' ')
-            echo "::error title=Gradle Error::$ERR"
-            tail -n 80 build_out.txt
-            exit 1
-          }
+        run: gradle :app:assembleDebug --stacktrace --no-daemon
 
       - name: Upload Installable APK
         uses: actions/upload-artifact@v4
@@ -53,4 +47,4 @@ jobs:
 
       - name: Run Unit Tests (Rules, Audio Ducking, Network)
         working-directory: ./android
-        run: gradle :core-engine:test :core-network:test :core-audio:test --no-daemon || true
+        run: gradle :core-engine:test :core-network:test :core-audio:test --no-daemon
