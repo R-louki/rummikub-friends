@@ -1,0 +1,21 @@
+{
+  "name": "rummikub-server",
+  "version": "1.0.0",
+  "description": "Authoritative Real-Time WebSocket Server for Rummikub",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "simulate": "tsx src/simulator/bot-simulation.ts",
+    "test": "node --test --test-force-exit --import tsx src/**/*.test.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

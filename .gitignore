@@ -1,0 +1,19 @@
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Android & Gradle
+.gradle/
+build/
+app/build/
+core-*/build/
+*.iml
+.idea/
+local.properties
+.DS_Store
+captures/
+.externalNativeBuild
+.cxx

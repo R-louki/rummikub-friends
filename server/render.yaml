@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: rummikub-server
+    env: docker
+    dockerfilePath: server/Dockerfile
+    dockerContext: server
+    plan: free
+    region: frankfurt # Serveur en Europe (Frankfurt) pour une latence minimale en France (<25ms)
+    envVars:
+      - key: PORT
+        value: 8080
