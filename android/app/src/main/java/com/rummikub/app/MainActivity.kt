@@ -41,7 +41,8 @@ class MainActivity : ComponentActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         hideSystemBars()
 
-        val serverWsUrl = "ws://10.0.2.2:8080"
+        // Cloud 24/7 Authoritative Server on Render (accessible worldwide by any phone)
+        val serverWsUrl = "wss://rummikub-friends.onrender.com"
         val myPlayerId = "P_" + System.currentTimeMillis().toString().takeLast(6)
 
         networkRepository = GameNetworkRepository(serverUrl = serverWsUrl)
