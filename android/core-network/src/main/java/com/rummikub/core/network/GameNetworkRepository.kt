@@ -286,8 +286,8 @@ class GameNetworkRepository(
 
             is NetworkPacket.TurnCommittedEvent -> {
                 _boardState.value = packet.boardState
-                if (packet.updatedRack != null) {
-                    _playerRack.value = packet.updatedRack
+                packet.updatedRack?.let { rack ->
+                    _playerRack.value = rack
                 }
                 // Update player tile counts
                 _players.value = _players.value.map { p ->
@@ -298,8 +298,8 @@ class GameNetworkRepository(
 
             is NetworkPacket.TurnRollbackEvent -> {
                 _boardState.value = packet.restoredBoardState
-                if (packet.restoredRack != null) {
-                    _playerRack.value = packet.restoredRack
+                packet.restoredRack?.let { rack ->
+                    _playerRack.value = rack
                 }
                 _players.value = _players.value.map { p ->
                     val count = packet.playerTilesCount[p.id] ?: p.tileCount
@@ -313,8 +313,9 @@ class GameNetworkRepository(
                     drawPileCount = packet.newDrawPileCount,
                     activePlayerId = packet.nextPlayerId
                 )
-                if (packet.drawnTile != null && packet.playerId == _myPlayerId.value) {
-                    _playerRack.value = _playerRack.value.withTileAdded(packet.drawnTile)
+                val drawn = packet.drawnTile
+                if (drawn != null && packet.playerId == _myPlayerId.value) {
+                    _playerRack.value = _playerRack.value.withTileAdded(drawn)
                 }
                 _players.value = _players.value.map { p ->
                     val count = packet.playerTilesCount[p.id] ?: p.tileCount
