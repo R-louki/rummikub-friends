@@ -27,7 +27,7 @@ data class Tile(
             require(number in 1..13) { "Tile number must be between 1 and 13, but was $number" }
             requireNotNull(color) { "Non-joker tile must have a color" }
         } else {
-            require(number == 0) { "Joker tile must have number 0, but was $number" }
+            require(number in 0..13) { "Joker tile number must be between 0 and 13, but was $number" }
         }
     }
 
