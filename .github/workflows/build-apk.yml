@@ -33,7 +33,8 @@ jobs:
 
       - name: Build Debug APK
         working-directory: ./android
-        run: gradle :app:assembleDebug --no-daemon
+        run: |
+          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee ../build.log
 
       - name: Upload Installable APK
         uses: actions/upload-artifact@v4
@@ -42,11 +43,13 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: build.log
+
       - name: Run Unit Tests (Rules, Audio Ducking, Network)
         working-directory: ./android
         run: gradle :core-model:test :core-engine:test :core-network:test :core-audio:test --no-daemon
-
-      - name: Dump Test Failure Details
-        if: failure()
-        run: |
-          find android -path "*/test-results/*/*.xml" -exec echo "FILE: {}" \; -exec cat {} \;

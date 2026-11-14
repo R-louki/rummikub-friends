@@ -36,7 +36,7 @@ class RummikubWebSocketClient(
 
     private val httpClient = HttpClient(OkHttp) {
         install(WebSockets) {
-            pingIntervalMillis = 0 // Heartbeat handled at application protocol level
+            pingIntervalMillis = 0L // Heartbeat handled at application protocol level
         }
         engine {
             config {
