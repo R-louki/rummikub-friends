@@ -200,6 +200,6 @@ function handlePacket(ws: WebSocket, packet: any): void {
   }
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Rummikub Server] Serveur WebSocket autoritaire démarré sur le port ${PORT}`);
 });
