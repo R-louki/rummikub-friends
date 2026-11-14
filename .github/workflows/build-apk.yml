@@ -31,12 +31,15 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      - name: Configure local.properties
+        run: echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
+
       - name: Build Debug APK
         working-directory: ./android
         run: |
           gradle :app:assembleDebug --stacktrace --no-daemon > build_out.txt 2>&1 || {
-            ERR=$(grep -m 1 'e: ' build_out.txt || tail -n 1 build_out.txt)
-            echo "::error title=Compilation Error::$ERR"
+            ERR=$(grep -A 4 -E 'What went wrong|Execution failed|Caused by' build_out.txt | tr '\n' ' ')
+            echo "::error title=Gradle Error::$ERR"
             tail -n 80 build_out.txt
             exit 1
           }
