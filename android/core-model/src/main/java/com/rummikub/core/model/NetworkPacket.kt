@@ -86,6 +86,12 @@ sealed class NetworkPacket {
     ) : NetworkPacket()
 
     @Serializable
+    @SerialName("leave_room_req")
+    data class LeaveRoomRequest(
+        val roomCode: String
+    ) : NetworkPacket()
+
+    @Serializable
     @SerialName("start_game_req")
     data class StartGameRequest(
         val roomCode: String
@@ -250,7 +256,8 @@ sealed class NetworkPacket {
     data class VoiceSignalPacket(
         val fromPlayerId: String,
         val toPlayerId: String? = null, // null for broadcast
-        val type: SignalType,
+        // Named "signalType" on the wire: "type" is reserved for the packet class discriminator.
+        @SerialName("signalType") val signalType: SignalType,
         val sdp: String? = null,
         val candidate: String? = null,
         val isSpeaking: Boolean = false,

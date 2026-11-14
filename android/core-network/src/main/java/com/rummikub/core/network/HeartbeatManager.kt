@@ -20,7 +20,7 @@ class HeartbeatManager(
     private val onMissedHeartbeatTimeout: suspend () -> Unit,
     private val getStateVersionId: () -> Long,
     private val pingIntervalMs: Long = 3000L,
-    private val missedPongTimeoutMs: Long = 6000L
+    private val missedPongTimeoutMs: Long = 15000L
 ) {
     private var heartbeatJob: Job? = null
     private var lastSentPingTime: Long = 0L

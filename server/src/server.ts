@@ -4,7 +4,33 @@ import { RoomManager } from './network/room-manager.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 
+/**
+ * ICE servers handed to the phones for live voice. STUN is always included.
+ * A TURN relay (needed between some mobile networks) is added when configured through
+ * TURN_URLS (comma separated, e.g. "turn:host:3478,turns:host:443?transport=tcp"),
+ * TURN_USERNAME and TURN_CREDENTIAL environment variables.
+ */
+function buildIceServers(): Array<{ urls: string[]; username?: string; credential?: string }> {
+  const servers: Array<{ urls: string[]; username?: string; credential?: string }> = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+  ];
+  const turnUrls = (process.env.TURN_URLS ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  if (turnUrls.length > 0 && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    servers.push({
+      urls: turnUrls,
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL
+    });
+  }
+  return servers;
+}
+
 const server = http.createServer((req, res) => {
+  if (req.url?.startsWith('/ice-servers')) {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ iceServers: buildIceServers() }));
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'UP', service: 'Rummikub Authoritative Real-Time Server' }));
 });
@@ -117,6 +143,11 @@ function handlePacket(ws: WebSocket, packet: any): void {
       break;
     }
 
+    case 'leave_room_req': {
+      roomManager.handleLeave(ws);
+      break;
+    }
+
     case 'start_game_req': {
       const ctx = roomManager.getRoomBySocket(ws);
       if (!ctx) return;
@@ -125,7 +156,13 @@ function handlePacket(ws: WebSocket, packet: any): void {
         ws.send(JSON.stringify({ type: 'error', code: 'UNAUTHORIZED', message: "Seul l'hôte peut lancer la partie." }));
         return;
       }
-      ctx.room.startGame();
+      if (!ctx.room.startGame()) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          code: 'CANNOT_START',
+          message: ctx.room.status === 'IN_GAME' ? 'La partie est déjà en cours.' : 'Il faut au moins 2 joueurs pour démarrer.'
+        }));
+      }
       break;
     }
 
@@ -133,7 +170,7 @@ function handlePacket(ws: WebSocket, packet: any): void {
       const ctx = roomManager.getRoomBySocket(ws);
       if (!ctx) return;
       const player = ctx.room.players.get(ctx.playerId);
-      if (player && player.isHost && ctx.room.status === 'LOBBY') {
+      if (player && player.isHost && ctx.room.status !== 'IN_GAME') {
         ctx.room.config = { ...ctx.room.config, ...packet.config };
         ctx.room.broadcast({ type: 'config_updated_evt', config: ctx.room.config });
       }

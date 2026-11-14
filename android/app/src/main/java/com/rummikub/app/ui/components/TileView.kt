@@ -12,10 +12,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -32,6 +30,8 @@ import com.rummikub.core.model.TileColor
  *
  * @param tile The tile model to render.
  * @param isDragging True if currently lifted by a drag gesture.
+ * @param isSelected True if the tile is selected (tap mode): golden border, slightly raised.
+ * @param isNewThisTurn True if the tile was placed on the table during the current turn.
  * @param isGhost True if acting as a target drop slot placeholder.
  * @param width Physical width (default 42.dp for landscape).
  * @param height Physical height (default 58.dp).
@@ -41,18 +41,22 @@ fun TileView(
     tile: Tile,
     modifier: Modifier = Modifier,
     isDragging: Boolean = false,
+    isSelected: Boolean = false,
+    isNewThisTurn: Boolean = false,
     isGhost: Boolean = false,
     width: Dp = 42.dp,
     height: Dp = 58.dp
 ) {
+    val lifted = isDragging || isSelected
+
     val scale by animateFloatAsState(
-        targetValue = if (isDragging) 1.10f else 1.0f,
+        targetValue = if (lifted) 1.10f else 1.0f,
         animationSpec = tween(durationMillis = 120),
         label = "tile_scale"
     )
 
     val elevation by animateFloatAsState(
-        targetValue = if (isDragging) 12f else 3f,
+        targetValue = if (lifted) 12f else 3f,
         animationSpec = tween(durationMillis = 120),
         label = "tile_elevation"
     )
@@ -68,6 +72,13 @@ fun TileView(
 
     val alpha = if (isGhost) 0.40f else 1.0f
 
+    val borderColor = when {
+        isSelected -> Color(0xFFFFD54F)
+        isNewThisTurn -> Color(0xFF4FC3F7)
+        else -> Color(0xFFC0B8A2)
+    }
+    val borderWidth = if (isSelected || isNewThisTurn) 2.dp else 1.dp
+
     Box(
         modifier = modifier
             .size(width = width, height = height)
@@ -79,7 +90,7 @@ fun TileView(
                     colors = listOf(TileIvoryBevel, TileIvorySurface, TileIvoryShadow)
                 )
             )
-            .border(1.dp, Color(0xFFC0B8A2), RoundedCornerShape(6.dp))
+            .border(borderWidth, borderColor, RoundedCornerShape(6.dp))
             .padding(2.dp),
         contentAlignment = Alignment.Center
     ) {

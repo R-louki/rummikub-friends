@@ -1,17 +1,19 @@
 import { WebSocket } from 'ws';
-import { 
-  BoardState, 
-  GameConfig, 
-  MeldSet, 
-  PlayerRack, 
-  Tile, 
-  DEFAULT_GAME_CONFIG 
+import {
+  BoardState,
+  GameConfig,
+  MeldSet,
+  PlayerRack,
+  Tile,
+  DEFAULT_GAME_CONFIG
 } from '../models/types.js';
 import { ServerPlayer, StateDelta, RoomStatus } from '../models/server-models.js';
 import { createStandardDeck } from '../engine/deck.js';
 import { BoardValidator } from '../engine/board-validator.js';
 import { InitialMeldEvaluator } from '../engine/initial-meld-evaluator.js';
 import crypto from 'node:crypto';
+
+export type DeckFactory = () => Tile[];
 
 export class Room {
   readonly roomCode: string;
@@ -25,6 +27,7 @@ export class Room {
   private turnOrder: string[] = [];
   private activePlayerIndex: number = 0;
   private currentTurnNumber: number = 0;
+  private readonly deckFactory: DeckFactory;
 
   boardState: BoardState = {
     versionId: 0,
@@ -46,25 +49,44 @@ export class Room {
   private readonly MAX_DELTA_HISTORY = 20;
 
   // Timers
-  private turnTimer: NodeJS.Timeout | null = null;
   private turnRemainingMs: number = 0;
   private turnTickInterval: NodeJS.Timeout | null = null;
 
-  private gracePeriodTimer: NodeJS.Timeout | null = null;
   private gracePeriodSecondsRemaining: number = 0;
   private gracePeriodTickInterval: NodeJS.Timeout | null = null;
 
-  constructor(roomCode: string, initialConfig: GameConfig = DEFAULT_GAME_CONFIG) {
+  constructor(roomCode: string, initialConfig: GameConfig = DEFAULT_GAME_CONFIG, deckFactory: DeckFactory = () => createStandardDeck()) {
     this.roomCode = roomCode;
-    this.config = { ...initialConfig };
+    this.config = { ...DEFAULT_GAME_CONFIG, ...initialConfig };
+    this.deckFactory = deckFactory;
   }
 
   // ==========================================
   // PLAYER JOIN, LEAVE & RECONNECT
   // ==========================================
 
+  /** A room accepts new players while no game is running (lobby or between two rounds). */
+  get isJoinable(): boolean {
+    return this.status !== 'IN_GAME' && this.players.size < this.config.maxPlayers;
+  }
+
+  get isEmpty(): boolean {
+    return this.players.size === 0;
+  }
+
+  get allDisconnected(): boolean {
+    return Array.from(this.players.values()).every(p => !p.isConnected);
+  }
+
+  get hostId(): string | null {
+    for (const p of this.players.values()) {
+      if (p.isHost) return p.id;
+    }
+    return null;
+  }
+
   addPlayer(id: string, name: string, socket: WebSocket): { player: ServerPlayer; sessionToken: string } {
-    const isHost = this.players.size === 0;
+    const isHost = this.hostId === null;
     const sessionToken = crypto.randomUUID();
 
     const player: ServerPlayer = {
@@ -90,9 +112,14 @@ export class Room {
     return { player, sessionToken };
   }
 
+  /**
+   * Socket lost (network cut, app killed). Idempotent: a second call for an already
+   * disconnected player does nothing, so heartbeat supervision + socket close cannot
+   * start two grace periods.
+   */
   handleDisconnect(playerId: string): void {
     const player = this.players.get(playerId);
-    if (!player) return;
+    if (!player || !player.isConnected) return;
 
     player.isConnected = false;
     player.rack.isConnected = false;
@@ -100,23 +127,121 @@ export class Room {
 
     console.log(`[Room ${this.roomCode}] Joueur déconnecté: ${player.name} (${playerId})`);
 
-    if (this.status === 'IN_GAME') {
-      const isActive = this.boardState.activePlayerId === playerId;
-      if (isActive) {
-        this.startGracePeriod(playerId);
-      } else {
-        this.broadcast({
-          type: 'player_disconnected_evt',
-          playerId,
-          gracePeriodSeconds: 0
-        });
-      }
+    if (this.status !== 'IN_GAME') {
+      // Not playing: the player simply leaves the room.
+      this.removePlayer(playerId);
+      return;
+    }
+
+    if (this.allDisconnected) {
+      // Nobody left to play: freeze all timers until someone reconnects.
+      this.clearTurnTimers();
+      this.clearGraceTimers();
+      this.boardState.isGracePeriod = false;
+      this.boardState.disconnectedPlayerId = null;
+      console.log(`[Room ${this.roomCode}] Tous les joueurs sont déconnectés, partie en pause.`);
+      return;
+    }
+
+    const isActive = this.boardState.activePlayerId === playerId;
+    if (isActive) {
+      this.startGracePeriod(playerId);
     } else {
       this.broadcast({
-        type: 'player_left_evt',
-        playerId
+        type: 'player_disconnected_evt',
+        playerId,
+        gracePeriodSeconds: 0
       });
     }
+  }
+
+  /**
+   * Explicit "leave room" from the client. The player is removed for good.
+   */
+  handleLeave(playerId: string): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+
+    console.log(`[Room ${this.roomCode}] Joueur quitte le salon: ${player.name} (${playerId})`);
+    this.sockets.delete(playerId);
+    player.isConnected = false;
+    player.rack.isConnected = false;
+
+    if (this.status !== 'IN_GAME') {
+      this.removePlayer(playerId);
+      return;
+    }
+
+    // Leaving mid-game: drop the player from the turn order and continue with the others.
+    const wasActive = this.boardState.activePlayerId === playerId;
+    if (wasActive) {
+      this.clearTurnTimers();
+      this.clearGraceTimers();
+      this.boardState.isGracePeriod = false;
+      this.boardState.disconnectedPlayerId = null;
+      if (this.turnSnapshot) {
+        this.boardState.melds = JSON.parse(JSON.stringify(this.turnSnapshot.board.melds));
+      }
+    }
+
+    const removedIndex = this.turnOrder.indexOf(playerId);
+    this.removePlayer(playerId);
+    if (removedIndex >= 0) {
+      this.turnOrder.splice(removedIndex, 1);
+      if (this.turnOrder.length > 0) {
+        if (wasActive) {
+          // The next player now sits at removedIndex (wrapped).
+          this.activePlayerIndex = removedIndex % this.turnOrder.length;
+        } else if (removedIndex < this.activePlayerIndex) {
+          this.activePlayerIndex -= 1;
+        }
+      }
+    }
+
+    if (this.turnOrder.length < 2) {
+      this.finishGameByForfeit();
+      return;
+    }
+
+    if (wasActive) {
+      const nextPlayerId = this.turnOrder[this.activePlayerIndex];
+      this.boardState.versionId++;
+      this.boardState.activePlayerId = nextPlayerId;
+      this.boardState.turnRemainingMillis = this.config.turnDurationSeconds * 1000;
+      this.broadcast({
+        type: 'turn_rollback_evt',
+        playerId,
+        reason: `${player.name} a quitté la partie. Le tour passe au joueur suivant.`,
+        restoredBoardState: this.boardState,
+        nextPlayerId,
+        playerTilesCount: this.getPlayerTilesCount()
+      });
+      this.startPlayerTurn(nextPlayerId);
+    }
+  }
+
+  /** Removes a player from the room and hands the host role over if needed. */
+  private removePlayer(playerId: string): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+
+    this.players.delete(playerId);
+    this.sockets.delete(playerId);
+
+    let newHostId: string | null = null;
+    if (player.isHost) {
+      const next = this.players.values().next().value as ServerPlayer | undefined;
+      if (next) {
+        next.isHost = true;
+        newHostId = next.id;
+      }
+    }
+
+    this.broadcast({
+      type: 'player_left_evt',
+      playerId,
+      newHostId
+    });
   }
 
   reconnectPlayer(
@@ -130,6 +255,8 @@ export class Room {
       return false;
     }
 
+    const wasPaused = this.status === 'IN_GAME' && this.allDisconnected;
+
     player.isConnected = true;
     player.rack.isConnected = true;
     player.lastHeartbeatTime = Date.now();
@@ -140,32 +267,22 @@ export class Room {
     // If active player reconnected during grace period, resume turn
     if (this.boardState.isGracePeriod && this.boardState.disconnectedPlayerId === playerId) {
       this.cancelGracePeriod();
+    } else if (wasPaused) {
+      // Game was frozen with everybody offline: resume the active player's turn.
+      this.resumeAfterPause();
     }
 
-    // Determine whether to send Delta or Full Snapshot
-    const canDeltaSync = this.canProvideDeltaSync(lastKnownVersionId);
-    if (canDeltaSync) {
-      const deltas = this.getDeltasSince(lastKnownVersionId);
-      const latestDelta = deltas[deltas.length - 1];
-      this.sendTo(playerId, {
-        type: 'sync_delta_res',
-        baseVersionId: lastKnownVersionId,
-        targetVersionId: this.boardState.versionId,
-        meldModifications: latestDelta ? latestDelta.melds : this.boardState.melds,
-        removedMeldIds: [],
-        activePlayerId: this.boardState.activePlayerId,
-        turnRemainingMillis: this.turnRemainingMs
-      });
-    } else {
-      this.sendTo(playerId, {
-        type: 'full_snapshot_res',
-        roomCode: this.roomCode,
-        boardState: this.boardState,
-        playerRack: player.rack,
-        players: this.getPlayerSummaries(),
-        config: this.config
-      });
-    }
+    // Always send the complete authoritative state: the rack may have changed while the
+    // player was away (penalty tiles, rollback), which a meld-only delta cannot convey.
+    this.boardState.turnRemainingMillis = Math.max(0, this.turnRemainingMs);
+    this.sendTo(playerId, {
+      type: 'full_snapshot_res',
+      roomCode: this.roomCode,
+      boardState: this.boardState,
+      playerRack: player.rack,
+      players: this.getPlayerSummaries(),
+      config: this.config
+    });
 
     // Broadcast reconnected event to all other players
     this.broadcast({
@@ -176,16 +293,34 @@ export class Room {
     return true;
   }
 
+  private resumeAfterPause(): void {
+    const activeId = this.boardState.activePlayerId;
+    const active = this.players.get(activeId);
+    if (!active) return;
+    if (active.isConnected) {
+      this.resumeTurnTimer();
+    } else {
+      this.startGracePeriod(activeId);
+    }
+  }
+
   // ==========================================
   // GAME LIFECYCLE
   // ==========================================
 
   startGame(): boolean {
+    if (this.status === 'IN_GAME') return false;
     if (this.players.size < 2) return false;
+
+    this.clearTurnTimers();
+    this.clearGraceTimers();
     this.status = 'IN_GAME';
+    this.deltaHistory = [];
+    this.currentTurnNumber = 0;
+    this.turnSnapshot = null;
 
     // 1. Generate & shuffle 106-tile deck
-    this.deck = createStandardDeck();
+    this.deck = this.deckFactory();
 
     // 2. Deal 14 tiles to each player
     this.turnOrder = Array.from(this.players.keys());
@@ -240,18 +375,28 @@ export class Room {
       turnNumber: this.currentTurnNumber
     };
 
-    // If turnDurationSeconds > 0, start countdown
-    if (this.config.turnDurationSeconds > 0) {
-      this.turnTickInterval = setInterval(() => {
-        this.turnRemainingMs -= 1000;
-        this.boardState.turnRemainingMillis = Math.max(0, this.turnRemainingMs);
-
-        if (this.turnRemainingMs <= 0) {
-          this.handleTurnTimeout(playerId);
-        }
-      }, 1000);
-      this.turnTickInterval.unref();
+    if (!player.isConnected) {
+      // The player is away: give them the grace period instead of a silent full turn.
+      this.startGracePeriod(playerId);
+      return;
     }
+
+    this.resumeTurnTimer();
+  }
+
+  private resumeTurnTimer(): void {
+    this.clearTurnTimers();
+    if (this.config.turnDurationSeconds <= 0 || this.turnRemainingMs <= 0) return;
+
+    this.turnTickInterval = setInterval(() => {
+      this.turnRemainingMs -= 1000;
+      this.boardState.turnRemainingMillis = Math.max(0, this.turnRemainingMs);
+
+      if (this.turnRemainingMs <= 0) {
+        this.handleTurnTimeout(this.boardState.activePlayerId);
+      }
+    }, 1000);
+    this.turnTickInterval.unref?.();
   }
 
   // ==========================================
@@ -263,25 +408,44 @@ export class Room {
     proposedMelds: MeldSet[],
     remainingRackTileIds: string[]
   ): void {
+    if (this.status !== 'IN_GAME') return;
     if (this.boardState.activePlayerId !== playerId) return;
+    if (this.boardState.isGracePeriod) return;
     const player = this.players.get(playerId)!;
     const snapshot = this.turnSnapshot;
-
     if (!snapshot) return;
 
-    // Check if player played at least 1 tile
-    const initialRackTileIds = new Set(snapshot.rack.tiles.map(t => t.id));
-    const playedTiles = snapshot.rack.tiles.filter(t => !remainingRackTileIds.includes(t.id));
+    const safeRemaining = Array.isArray(remainingRackTileIds) ? remainingRackTileIds : [];
+    const safeMelds = Array.isArray(proposedMelds) ? proposedMelds : [];
+
+    // Tiles played from the rack this turn
+    const remainingSet = new Set(safeRemaining);
+    const playedTiles = snapshot.rack.tiles.filter(t => !remainingSet.has(t.id));
 
     if (playedTiles.length === 0) {
-      this.executeTurnRollback(playerId, "Aucune tuile n'a été déposée sur le plateau. Piochez une tuile pour passer.", false);
+      // Not a rule violation: just tell the player, the turn keeps running.
+      this.sendTo(playerId, {
+        type: 'error',
+        code: 'NO_TILES_PLAYED',
+        message: "Aucune tuile n'a été déposée sur la table. Posez au moins une tuile ou piochez pour passer."
+      });
       return;
     }
 
-    // Propose board
+    // Rebuild the proposed board from tiles the server knows (ignore client-side tile data)
+    const rebuilt = this.rebuildProposedMelds(safeMelds, snapshot, playedTiles);
+    if (!rebuilt.ok) {
+      this.sendTo(playerId, {
+        type: 'error',
+        code: 'INVALID_PROPOSAL',
+        message: rebuilt.reason
+      });
+      return;
+    }
+
     const proposedBoard: BoardState = {
       ...this.boardState,
-      melds: proposedMelds.filter(m => m.tiles.length > 0)
+      melds: rebuilt.melds
     };
 
     // Validate board
@@ -323,59 +487,11 @@ export class Room {
     this.recordDelta(this.boardState.melds);
 
     // Update player rack
-    const remainingTiles = snapshot.rack.tiles.filter(t => remainingRackTileIds.includes(t.id));
-    player.rack.tiles = remainingTiles;
+    player.rack.tiles = snapshot.rack.tiles.filter(t => remainingSet.has(t.id));
 
     // Check Win Condition (Rack is empty!)
     if (player.rack.tiles.length === 0) {
-      this.status = 'FINISHED';
-      this.clearTurnTimers();
-
-      // Calcul officiel des scores Rummikub
-      let totalLoserPenaltySum = 0;
-      const scores: any[] = [];
-
-      for (const [pid, p] of this.players) {
-        if (pid === playerId) continue;
-
-        let playerPenalty = 0;
-        let hadJoker = false;
-        for (const t of p.rack.tiles) {
-          if (t.isJoker) {
-            playerPenalty += 30; // Pénalité Joker = 30 points !
-            hadJoker = true;
-          } else {
-            playerPenalty += t.number;
-          }
-        }
-        totalLoserPenaltySum += playerPenalty;
-        scores.push({
-          playerId: pid,
-          playerName: p.name,
-          isWinner: false,
-          remainingTileCount: p.rack.tiles.length,
-          scoreDelta: -playerPenalty,
-          hadJokerPenalty: hadJoker
-        });
-      }
-
-      // Le vainqueur marque la somme positive des pénalités adverses
-      scores.push({
-        playerId: playerId,
-        playerName: player.name,
-        isWinner: true,
-        remainingTileCount: 0,
-        scoreDelta: totalLoserPenaltySum,
-        hadJokerPenalty: false
-      });
-
-      this.broadcast({
-        type: 'game_over_evt',
-        roomCode: this.roomCode,
-        winnerId: playerId,
-        winnerName: player.name,
-        scores
-      });
+      this.finishGame(playerId);
       return;
     }
 
@@ -388,9 +504,9 @@ export class Room {
       nextPlayerId,
       boardState: this.boardState,
       playerTilesCount: this.getPlayerTilesCount()
-    });
+    }, playerId);
 
-    // Send updated rack to active player
+    // Send updated rack to the player who just played
     this.sendTo(playerId, {
       type: 'turn_committed_evt',
       activePlayerId: playerId,
@@ -403,15 +519,68 @@ export class Room {
     this.startPlayerTurn(nextPlayerId);
   }
 
+  /**
+   * Validates tile conservation and rebuilds melds using the server's own tile objects:
+   * every tile on the proposed board must be either a tile that was already on the table
+   * at the start of the turn or a tile from the player's starting rack, each used exactly once.
+   */
+  private rebuildProposedMelds(
+    proposedMelds: MeldSet[],
+    snapshot: { board: BoardState; rack: PlayerRack },
+    playedTiles: Tile[]
+  ): { ok: true; melds: MeldSet[] } | { ok: false; reason: string } {
+    const known = new Map<string, Tile>();
+    for (const m of snapshot.board.melds) for (const t of m.tiles) known.set(t.id, t);
+    for (const t of snapshot.rack.tiles) known.set(t.id, t);
+
+    const expected = new Set<string>();
+    for (const m of snapshot.board.melds) for (const t of m.tiles) expected.add(t.id);
+    for (const t of playedTiles) expected.add(t.id);
+
+    const seen = new Set<string>();
+    const melds: MeldSet[] = [];
+
+    for (const m of proposedMelds) {
+      if (!m || !Array.isArray(m.tiles)) continue;
+      if (m.tiles.length === 0) continue;
+      const tiles: Tile[] = [];
+      for (const t of m.tiles) {
+        const id = t?.id;
+        if (typeof id !== 'string') return { ok: false, reason: 'Tuile sans identifiant.' };
+        const canonical = known.get(id);
+        if (!canonical) return { ok: false, reason: `Tuile inconnue sur la table (${id}).` };
+        if (!expected.has(id)) return { ok: false, reason: `La tuile ${id} est encore sur votre chevalet.` };
+        if (seen.has(id)) return { ok: false, reason: `La tuile ${id} apparaît deux fois.` };
+        seen.add(id);
+        tiles.push(canonical);
+      }
+      melds.push({
+        id: typeof m.id === 'string' && m.id.length > 0 ? m.id : crypto.randomUUID(),
+        tiles,
+        gridRow: Number.isFinite(m.gridRow) ? m.gridRow : 0,
+        gridCol: Number.isFinite(m.gridCol) ? m.gridCol : 0
+      });
+    }
+
+    if (seen.size !== expected.size) {
+      const missing = Array.from(expected).filter(id => !seen.has(id));
+      return { ok: false, reason: `Des tuiles ont disparu de la table (${missing.length}).` };
+    }
+
+    return { ok: true, melds };
+  }
+
   handleDrawTile(playerId: string): void {
+    if (this.status !== 'IN_GAME') return;
     if (this.boardState.activePlayerId !== playerId) return;
+    if (this.boardState.isGracePeriod) return;
     const player = this.players.get(playerId)!;
 
     // If player had modified the board during this turn before deciding to draw, rollback board
     if (this.turnSnapshot) {
       this.boardState.melds = JSON.parse(JSON.stringify(this.turnSnapshot.board.melds));
-      this.boardState.versionId++;
     }
+    this.boardState.versionId++;
 
     let drawnTile: Tile | null = null;
     if (this.deck.length > 0) {
@@ -429,19 +598,17 @@ export class Room {
       newDrawPileCount: this.deck.length,
       nextPlayerId,
       playerTilesCount: this.getPlayerTilesCount()
-    });
+    }, playerId);
 
     // Send private drawn tile payload to drawing player
-    if (drawnTile) {
-      this.sendTo(playerId, {
-        type: 'tile_drawn_evt',
-        playerId,
-        drawnTile,
-        newDrawPileCount: this.deck.length,
-        nextPlayerId,
-        playerTilesCount: this.getPlayerTilesCount()
-      });
-    }
+    this.sendTo(playerId, {
+      type: 'tile_drawn_evt',
+      playerId,
+      drawnTile,
+      newDrawPileCount: this.deck.length,
+      nextPlayerId,
+      playerTilesCount: this.getPlayerTilesCount()
+    });
 
     this.startPlayerTurn(nextPlayerId);
   }
@@ -456,8 +623,10 @@ export class Room {
   }
 
   private executeTurnRollback(playerId: string, reason: string, applyPenalty: boolean): void {
+    this.clearTurnTimers();
     const snapshot = this.turnSnapshot;
-    const player = this.players.get(playerId)!;
+    const player = this.players.get(playerId);
+    if (!player) return;
 
     const penaltyTiles: Tile[] = [];
     if (applyPenalty && this.config.penaltyTilesCount > 0 && this.deck.length > 0) {
@@ -466,10 +635,11 @@ export class Room {
       this.boardState.drawPileCount = this.deck.length;
     }
 
-    // Restore pristine board from snapshot
-    if (snapshot) {
+    // Restore pristine board from snapshot (only if it belongs to this player's turn)
+    if (snapshot && snapshot.rack.playerId === playerId) {
       this.boardState.melds = JSON.parse(JSON.stringify(snapshot.board.melds));
       player.rack = JSON.parse(JSON.stringify(snapshot.rack));
+      player.rack.isConnected = player.isConnected;
     }
 
     player.rack.tiles.push(...penaltyTiles);
@@ -485,9 +655,9 @@ export class Room {
       restoredBoardState: this.boardState,
       nextPlayerId,
       playerTilesCount: this.getPlayerTilesCount()
-    });
+    }, playerId);
 
-    // Send restored rack + penalty tiles to active player
+    // Send restored rack + penalty tiles to the player concerned
     this.sendTo(playerId, {
       type: 'turn_rollback_evt',
       playerId,
@@ -502,12 +672,101 @@ export class Room {
     this.startPlayerTurn(nextPlayerId);
   }
 
+  private finishGame(winnerId: string): void {
+    const winner = this.players.get(winnerId)!;
+    this.status = 'FINISHED';
+    this.clearTurnTimers();
+    this.clearGraceTimers();
+    this.turnSnapshot = null;
+    this.boardState.isGracePeriod = false;
+    this.boardState.disconnectedPlayerId = null;
+
+    // Calcul officiel des scores Rummikub
+    let totalLoserPenaltySum = 0;
+    const scores: any[] = [];
+
+    for (const [pid, p] of this.players) {
+      if (pid === winnerId) continue;
+
+      let playerPenalty = 0;
+      let hadJoker = false;
+      for (const t of p.rack.tiles) {
+        if (t.isJoker) {
+          playerPenalty += 30; // Pénalité Joker = 30 points !
+          hadJoker = true;
+        } else {
+          playerPenalty += t.number;
+        }
+      }
+      totalLoserPenaltySum += playerPenalty;
+      scores.push({
+        playerId: pid,
+        playerName: p.name,
+        isWinner: false,
+        remainingTileCount: p.rack.tiles.length,
+        scoreDelta: -playerPenalty,
+        hadJokerPenalty: hadJoker
+      });
+    }
+
+    // Le vainqueur marque la somme positive des pénalités adverses
+    scores.push({
+      playerId: winnerId,
+      playerName: winner.name,
+      isWinner: true,
+      remainingTileCount: 0,
+      scoreDelta: totalLoserPenaltySum,
+      hadJokerPenalty: false
+    });
+
+    this.broadcast({
+      type: 'game_over_evt',
+      roomCode: this.roomCode,
+      winnerId,
+      winnerName: winner.name,
+      scores
+    });
+  }
+
+  /** Everyone else left: the last player standing wins the round with 0 points. */
+  private finishGameByForfeit(): void {
+    this.status = 'FINISHED';
+    this.clearTurnTimers();
+    this.clearGraceTimers();
+    this.turnSnapshot = null;
+    this.boardState.isGracePeriod = false;
+    this.boardState.disconnectedPlayerId = null;
+
+    const remaining = this.turnOrder[0] ? this.players.get(this.turnOrder[0]) : undefined;
+    if (!remaining) return;
+
+    this.broadcast({
+      type: 'game_over_evt',
+      roomCode: this.roomCode,
+      winnerId: remaining.id,
+      winnerName: remaining.name,
+      scores: [{
+        playerId: remaining.id,
+        playerName: remaining.name,
+        isWinner: true,
+        remainingTileCount: remaining.rack.tiles.length,
+        scoreDelta: 0,
+        hadJokerPenalty: false
+      }]
+    });
+  }
+
   // ==========================================
   // GRACE PERIOD FOR RECONNECTION
   // ==========================================
 
   private startGracePeriod(playerId: string): void {
+    // Idempotent: never run two grace countdowns at once.
+    if (this.boardState.isGracePeriod && this.boardState.disconnectedPlayerId === playerId && this.gracePeriodTickInterval) {
+      return;
+    }
     this.clearTurnTimers();
+    this.clearGraceTimers();
 
     this.boardState.isGracePeriod = true;
     this.boardState.disconnectedPlayerId = playerId;
@@ -527,37 +786,27 @@ export class Room {
         this.handleGracePeriodExpired(playerId);
       }
     }, 1000);
-    this.gracePeriodTickInterval.unref();
+    this.gracePeriodTickInterval.unref?.();
   }
 
   private cancelGracePeriod(): void {
-    if (this.gracePeriodTickInterval) {
-      clearInterval(this.gracePeriodTickInterval);
-      this.gracePeriodTickInterval = null;
-    }
+    this.clearGraceTimers();
     this.boardState.isGracePeriod = false;
     this.boardState.disconnectedPlayerId = null;
-
-    // Resume turn timer
-    if (this.config.turnDurationSeconds > 0 && this.turnRemainingMs > 0) {
-      this.turnTickInterval = setInterval(() => {
-        this.turnRemainingMs -= 1000;
-        this.boardState.turnRemainingMillis = Math.max(0, this.turnRemainingMs);
-        if (this.turnRemainingMs <= 0) {
-          this.handleTurnTimeout(this.boardState.activePlayerId);
-        }
-      }, 1000);
-    }
+    this.resumeTurnTimer();
   }
 
   private handleGracePeriodExpired(disconnectedPlayerId: string): void {
     console.log(`[Room ${this.roomCode}] Période de grâce expirée pour ${disconnectedPlayerId}`);
-    if (this.gracePeriodTickInterval) {
-      clearInterval(this.gracePeriodTickInterval);
-      this.gracePeriodTickInterval = null;
-    }
+    this.clearGraceTimers();
     this.boardState.isGracePeriod = false;
     this.boardState.disconnectedPlayerId = null;
+
+    this.broadcast({
+      type: 'grace_period_expired_evt',
+      disconnectedPlayerId,
+      nextPlayerId: this.peekNextPlayerId()
+    });
 
     // Auto-rollback active turn and advance
     this.executeTurnRollback(
@@ -571,11 +820,20 @@ export class Room {
   // HELPERS, DELTA SYNC & BROADCAST
   // ==========================================
 
+  private peekNextPlayerId(): string {
+    if (this.turnOrder.length === 0) return '';
+    return this.turnOrder[(this.activePlayerIndex + 1) % this.turnOrder.length];
+  }
+
   private advanceToNextPlayer(): string {
-    let nextIndex = (this.activePlayerIndex + 1) % this.turnOrder.length;
-    // Skip completely disconnected players if needed or let them have grace period
+    const nextIndex = (this.activePlayerIndex + 1) % this.turnOrder.length;
     this.activePlayerIndex = nextIndex;
-    return this.turnOrder[this.activePlayerIndex];
+    const nextPlayerId = this.turnOrder[this.activePlayerIndex];
+    // Reflect the hand-over in the board state BEFORE it is broadcast,
+    // so clients receive a boardState whose activePlayerId is already the next player.
+    this.boardState.activePlayerId = nextPlayerId;
+    this.boardState.turnRemainingMillis = this.config.turnDurationSeconds * 1000;
+    return nextPlayerId;
   }
 
   private recordDelta(melds: MeldSet[]): void {
@@ -592,25 +850,24 @@ export class Room {
     }
   }
 
-  private canProvideDeltaSync(clientVersionId: number): boolean {
-    if (this.deltaHistory.length === 0) return clientVersionId === this.boardState.versionId;
-    const oldest = this.deltaHistory[0].fromVersionId;
-    return clientVersionId >= oldest && clientVersionId <= this.boardState.versionId;
-  }
-
-  private getDeltasSince(clientVersionId: number): StateDelta[] {
-    return this.deltaHistory.filter(d => d.fromVersionId >= clientVersionId);
-  }
-
   private clearTurnTimers(): void {
     if (this.turnTickInterval) {
       clearInterval(this.turnTickInterval);
       this.turnTickInterval = null;
     }
-    if (this.turnTimer) {
-      clearTimeout(this.turnTimer);
-      this.turnTimer = null;
+  }
+
+  private clearGraceTimers(): void {
+    if (this.gracePeriodTickInterval) {
+      clearInterval(this.gracePeriodTickInterval);
+      this.gracePeriodTickInterval = null;
     }
+  }
+
+  /** Stops every timer; called by the RoomManager before dropping the room. */
+  dispose(): void {
+    this.clearTurnTimers();
+    this.clearGraceTimers();
   }
 
   broadcast(packet: any, excludePlayerId?: string): void {

@@ -20,3 +20,9 @@ captures/
 
 *.apk
 
+
+# Release signing key (never commit)
+android/keystore/
+*.jks
+*.keystore
+keystore.properties

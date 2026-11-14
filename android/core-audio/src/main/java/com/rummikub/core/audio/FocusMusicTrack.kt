@@ -4,10 +4,10 @@ package com.rummikub.core.audio
  * Musical genre for focus / concentration background audio.
  */
 enum class FocusGenre(val displayName: String) {
-    LO_FI("Lo-Fi Chill Beats"),
-    AMBIENT("Atmosphère Zen"),
-    WHITE_NOISE("Bruit Blanc Apaisant"),
-    SOFT_JAZZ("Jazz Doux & Café")
+    LO_FI("Café"),
+    AMBIENT("Vagues"),
+    WHITE_NOISE("Pluie"),
+    SOFT_JAZZ("Jazz")
 }
 
 /**
@@ -27,30 +27,27 @@ data class FocusMusicTrack(
     val durationMs: Long = 0L
 ) {
     companion object {
+        /**
+         * Free ambience loops from the Google sound library (checked reachable on 2026-11-15).
+         */
         val DEFAULT_PLAYLIST = listOf(
             FocusMusicTrack(
-                id = "lofi_01",
-                title = "Midnight Coffee Study",
+                id = "cafe_01",
+                title = "Ambiance café",
                 genre = FocusGenre.LO_FI,
                 uri = "https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg"
             ),
             FocusMusicTrack(
-                id = "ambient_01",
-                title = "Deep Space Zen",
-                genre = FocusGenre.AMBIENT,
-                uri = "https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg"
-            ),
-            FocusMusicTrack(
-                id = "white_noise_01",
-                title = "Gentle Rainfall & Focus",
+                id = "rain_01",
+                title = "Pluie sur le toit",
                 genre = FocusGenre.WHITE_NOISE,
                 uri = "https://actions.google.com/sounds/v1/weather/rain_on_roof.ogg"
             ),
             FocusMusicTrack(
-                id = "jazz_01",
-                title = "Acoustic Fireplace Lounge",
-                genre = FocusGenre.SOFT_JAZZ,
-                uri = "https://actions.google.com/sounds/v1/household/fireplace_blazing.ogg"
+                id = "waves_01",
+                title = "Vagues sur les rochers",
+                genre = FocusGenre.AMBIENT,
+                uri = "https://actions.google.com/sounds/v1/water/waves_crashing_on_rock_beach.ogg"
             )
         )
     }

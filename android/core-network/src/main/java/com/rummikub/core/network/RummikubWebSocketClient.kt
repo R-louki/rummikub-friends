@@ -6,6 +6,7 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
+import io.ktor.client.request.get
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import java.util.concurrent.TimeUnit
 
@@ -40,7 +42,7 @@ class RummikubWebSocketClient(
         }
         engine {
             config {
-                connectTimeout(5, TimeUnit.SECONDS)
+                connectTimeout(20, TimeUnit.SECONDS)
                 readTimeout(0, TimeUnit.MILLISECONDS) // Persistent streaming
             }
         }
@@ -52,18 +54,40 @@ class RummikubWebSocketClient(
     private val _incomingPackets = MutableSharedFlow<NetworkPacket>(extraBufferCapacity = 64)
     val incomingPackets: SharedFlow<NetworkPacket> = _incomingPackets.asSharedFlow()
 
+    /** Emitted when the server closes the socket or the stream breaks (not on local disconnect). */
+    private val _connectionClosed = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val connectionClosed: SharedFlow<String> = _connectionClosed.asSharedFlow()
+
     val isConnected: Boolean
         get() = session?.isActive == true
 
     /**
-     * Establishes a WebSocket connection to the authoritative server.
+     * Plain HTTP GET on the server's health endpoint. On a free-tier host this wakes the
+     * instance up so the WebSocket handshake that follows is fast. Errors are ignored.
      */
-    suspend fun connect(serverUrl: String) {
+    suspend fun warmUp(httpUrl: String, timeoutMs: Long = 70_000L) {
+        try {
+            withTimeout(timeoutMs) {
+                httpClient.get(httpUrl)
+            }
+        } catch (_: Exception) {
+            // Best effort only
+        }
+    }
+
+    /**
+     * Establishes a WebSocket connection to the authoritative server.
+     * The handshake is bounded by [handshakeTimeoutMs] so a sleeping server does not hang the UI forever.
+     */
+    suspend fun connect(serverUrl: String, handshakeTimeoutMs: Long = 30_000L) {
         disconnect()
-        val webSocketSession = httpClient.webSocketSession(serverUrl)
+        val webSocketSession = withTimeout(handshakeTimeoutMs) {
+            httpClient.webSocketSession(serverUrl)
+        }
         session = webSocketSession
 
         receiveJob = scope.launch {
+            var closeReason = "Connexion fermée par le serveur"
             try {
                 for (frame in webSocketSession.incoming) {
                     if (frame is Frame.Text) {
@@ -77,9 +101,14 @@ class RummikubWebSocketClient(
                     }
                 }
             } catch (e: CancellationException) {
-                // Normal cancellation
+                return@launch // Local disconnect: do not report
             } catch (e: Exception) {
+                closeReason = "Flux interrompu: ${e.message}"
                 System.err.println("[RummikubWebSocketClient] Erreur flux entrant: ${e.message}")
+            }
+            if (session === webSocketSession) {
+                session = null
+                _connectionClosed.tryEmit(closeReason)
             }
         }
     }
@@ -99,10 +128,11 @@ class RummikubWebSocketClient(
     suspend fun disconnect() {
         receiveJob?.cancel()
         receiveJob = null
-        try {
-            session?.close()
-        } catch (_: Exception) {}
+        val current = session
         session = null
+        try {
+            current?.close()
+        } catch (_: Exception) {}
     }
 
     fun close() {

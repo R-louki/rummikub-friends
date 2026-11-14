@@ -41,7 +41,7 @@ interface IWebRtcVoiceChat {
  * and speaking state synchronization.
  */
 class WebRtcVoiceChat(
-    private val myPlayerId: String,
+    var myPlayerId: String,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
     private val sendSignalPacket: suspend (NetworkPacket.VoiceSignalPacket) -> Unit = {}
 ) : IWebRtcVoiceChat {
@@ -141,7 +141,7 @@ class WebRtcVoiceChat(
         // Ignore signals from muted players
         if (_mutedPlayers.value.contains(senderId)) return
 
-        when (signal.type) {
+        when (signal.signalType) {
             NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS -> {
                 val current = _speakingPlayers.value.toMutableSet()
                 if (signal.isSpeaking) {
@@ -180,7 +180,7 @@ class WebRtcVoiceChat(
                 sendSignalPacket(
                     NetworkPacket.VoiceSignalPacket(
                         fromPlayerId = myPlayerId,
-                        type = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
+                        signalType = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
                         isSpeaking = isSpeaking
                     )
                 )

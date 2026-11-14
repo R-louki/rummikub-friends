@@ -1,0 +1,383 @@
+package com.rummikub.app.game
+
+import com.rummikub.core.engine.BoardValidator
+import com.rummikub.core.model.BoardState
+import com.rummikub.core.model.MeldSet
+import com.rummikub.core.model.PlayerRack
+import com.rummikub.core.model.Tile
+import com.rummikub.core.network.GameNetworkRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+/**
+ * Where a tile can be dropped (or sent by tap) on the table.
+ */
+sealed class DropTarget {
+    /** Create a brand new meld with the tile(s). */
+    object NewMeld : DropTarget()
+
+    /** Insert the tile into an existing meld at [index] (clamped, use Int.MAX_VALUE for the end). */
+    data class MeldPosition(val meldId: String, val index: Int) : DropTarget()
+
+    /** Put the tile back on the player's rack (only allowed for tiles played this turn). */
+    object Rack : DropTarget()
+}
+
+/**
+ * Live summary of the working turn, used by the HUD.
+ */
+data class TurnSummary(
+    val tilesPlaced: Int = 0,
+    val newMeldPoints: Int = 0,
+    val invalidMeldCount: Int = 0,
+    val isDirty: Boolean = false
+)
+
+/**
+ * Holds the local, in-progress state of the active player's turn:
+ * the working board and rack that the user edits by moving tiles around,
+ * plus the start-of-turn snapshot used by "Annuler Coup".
+ *
+ * The authoritative state always comes from [GameNetworkRepository]; whenever the server
+ * pushes a new board or rack, the working state is reset to it.
+ */
+class TurnController(
+    private val repository: GameNetworkRepository,
+    private val scope: CoroutineScope
+) {
+    private val _board = MutableStateFlow(BoardState())
+    val board: StateFlow<BoardState> = _board.asStateFlow()
+
+    private val _rack = MutableStateFlow(PlayerRack(playerId = ""))
+    val rack: StateFlow<PlayerRack> = _rack.asStateFlow()
+
+    /** Selected tiles, in selection order (tap mode supports multi-selection). */
+    private val _selectedTileIds = MutableStateFlow<List<String>>(emptyList())
+    val selectedTileIds: StateFlow<List<String>> = _selectedTileIds.asStateFlow()
+
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
+    private var snapshotBoard: BoardState = BoardState()
+    private var snapshotRack: PlayerRack = PlayerRack(playerId = "")
+
+    /** IDs of the tiles that were on the rack at the start of the turn (the only ones that may come back). */
+    private val snapshotRackIds: Set<String>
+        get() = snapshotRack.tiles.map { it.id }.toSet()
+
+    /** IDs of the tiles that were already on the table at the start of the turn. */
+    private val snapshotBoardTileIds: Set<String>
+        get() = snapshotBoard.allTileIds
+
+    /** Tiles currently on the table that were not there at the start of the turn. */
+    val newBoardTileIds: StateFlow<Set<String>> = _board
+        .combine(_rack) { board, _ -> board.allTileIds - snapshotBoardTileIds }
+        .stateIn(scope, SharingStarted.Eagerly, emptySet())
+
+    val summary: StateFlow<TurnSummary> = _board
+        .combine(_rack) { board, rack -> computeSummary(board, rack) }
+        .stateIn(scope, SharingStarted.Eagerly, TurnSummary())
+
+    init {
+        scope.launch {
+            repository.boardState.collect { server ->
+                snapshotBoard = server
+                _board.value = server
+                _selectedTileIds.value = emptyList()
+            }
+        }
+        scope.launch {
+            repository.playerRack.collect { server ->
+                val merged = mergeKeepingOrder(_rack.value.tiles, server.tiles)
+                snapshotRack = server.copy(tiles = merged)
+                _rack.value = snapshotRack
+                _selectedTileIds.value = emptyList()
+            }
+        }
+    }
+
+    // ==========================================
+    // SELECTION (tap mode)
+    // ==========================================
+
+    fun toggleSelection(tileId: String) {
+        val current = _selectedTileIds.value
+        _selectedTileIds.value = if (tileId in current) current - tileId else current + tileId
+    }
+
+    fun clearSelection() {
+        _selectedTileIds.value = emptyList()
+    }
+
+    /** Sends the selected tile(s) to [target]. Returns false if nothing was selected. */
+    fun sendSelectedTo(target: DropTarget): Boolean {
+        val selected = _selectedTileIds.value
+        if (selected.isEmpty()) return false
+        moveTiles(selected, target)
+        return true
+    }
+
+    // ==========================================
+    // TILE MOVES
+    // ==========================================
+
+    /** Moves several tiles as a block: together into one new meld, or one after another into a meld. */
+    fun moveTiles(tileIds: List<String>, target: DropTarget) {
+        if (tileIds.isEmpty()) return
+        if (tileIds.size == 1) {
+            moveTile(tileIds[0], target)
+            return
+        }
+        when (target) {
+            DropTarget.NewMeld -> {
+                moveTile(tileIds[0], DropTarget.NewMeld)
+                val newMeld = _board.value.findMeldContainingTile(tileIds[0]) ?: return
+                for (id in tileIds.drop(1)) {
+                    moveTile(id, DropTarget.MeldPosition(newMeld.id, Int.MAX_VALUE))
+                }
+            }
+            is DropTarget.MeldPosition -> {
+                tileIds.forEachIndexed { i, id ->
+                    val index = if (target.index == Int.MAX_VALUE) Int.MAX_VALUE else target.index + i
+                    moveTile(id, DropTarget.MeldPosition(target.meldId, index))
+                }
+            }
+            DropTarget.Rack -> tileIds.forEach { moveTile(it, DropTarget.Rack) }
+        }
+        _selectedTileIds.value = emptyList()
+    }
+
+    fun moveTile(tileId: String, target: DropTarget) {
+        val board = _board.value
+        val rack = _rack.value
+
+        val tileInRack = rack.tiles.firstOrNull { it.id == tileId }
+        val sourceMeld = board.findMeldContainingTile(tileId)
+        val tile = tileInRack ?: sourceMeld?.tiles?.firstOrNull { it.id == tileId } ?: return
+
+        if (target is DropTarget.Rack) {
+            if (tileInRack != null) {
+                _selectedTileIds.value = _selectedTileIds.value - tileId
+                return
+            }
+            if (tileId !in snapshotRackIds) {
+                _messages.tryEmit("Cette tuile appartient à la table, elle ne peut pas revenir sur votre chevalet.")
+                return
+            }
+        }
+
+        var melds: List<MeldSet> = board.melds
+        var rackTiles: List<Tile> = rack.tiles
+
+        // Reordering inside the same meld: no split, just move the tile.
+        if (target is DropTarget.MeldPosition && sourceMeld != null && sourceMeld.id == target.meldId) {
+            val without = sourceMeld.tiles.filterNot { it.id == tileId }
+            val sourceIndex = sourceMeld.tiles.indexOfFirst { it.id == tileId }
+            var insertAt = target.index
+            if (insertAt > sourceIndex) insertAt -= 1
+            insertAt = insertAt.coerceIn(0, without.size)
+            val reordered = without.toMutableList().also { it.add(insertAt, tile) }
+            melds = melds.map { if (it.id == sourceMeld.id) it.copy(tiles = reordered) else it }
+            commitWorkingState(board.copy(melds = melds), rack, tileId)
+            return
+        }
+
+        // 1. Remove from source
+        if (tileInRack != null) {
+            rackTiles = rackTiles.filterNot { it.id == tileId }
+        } else if (sourceMeld != null) {
+            melds = removeTileSplitting(melds, sourceMeld, tileId)
+        }
+
+        // 2. Add to target
+        when (target) {
+            DropTarget.Rack -> rackTiles = rackTiles + tile
+            DropTarget.NewMeld -> melds = melds + MeldSet(tiles = listOf(tile))
+            is DropTarget.MeldPosition -> {
+                val idx = melds.indexOfFirst { it.id == target.meldId }
+                melds = if (idx < 0) {
+                    melds + MeldSet(tiles = listOf(tile))
+                } else {
+                    val m = melds[idx]
+                    val insertAt = target.index.coerceIn(0, m.tiles.size)
+                    melds.toMutableList().also { it[idx] = m.withTileInserted(insertAt, tile) }
+                }
+            }
+        }
+
+        commitWorkingState(board.copy(melds = melds), rack.copy(tiles = rackTiles), tileId)
+    }
+
+    private fun commitWorkingState(board: BoardState, rack: PlayerRack, movedTileId: String) {
+        _board.value = board.copy(melds = board.melds.filter { it.isNotEmpty })
+        _rack.value = rack
+        _selectedTileIds.value = _selectedTileIds.value - movedTileId
+    }
+
+    /**
+     * Removes [tileId] from [meld]. If the tile sits in the middle, the meld is split in two:
+     * the left part keeps the original id, the right part gets a new one.
+     */
+    private fun removeTileSplitting(melds: List<MeldSet>, meld: MeldSet, tileId: String): List<MeldSet> {
+        val i = meld.tiles.indexOfFirst { it.id == tileId }
+        if (i < 0) return melds
+        val left = meld.tiles.subList(0, i).toList()
+        val right = meld.tiles.subList(i + 1, meld.tiles.size).toList()
+
+        val result = ArrayList<MeldSet>(melds.size + 1)
+        for (m in melds) {
+            if (m.id != meld.id) {
+                result += m
+                continue
+            }
+            when {
+                left.isEmpty() && right.isEmpty() -> Unit
+                left.isEmpty() -> result += m.copy(tiles = right)
+                right.isEmpty() -> result += m.copy(tiles = left)
+                else -> {
+                    result += m.copy(tiles = left)
+                    result += MeldSet(tiles = right, gridRow = m.gridRow, gridCol = m.gridCol)
+                }
+            }
+        }
+        return result
+    }
+
+    // ==========================================
+    // RACK SORTING (local only, never part of the turn)
+    // ==========================================
+
+    fun sortByRun() {
+        _rack.value = _rack.value.sortedByRun()
+        snapshotRack = snapshotRack.sortedByRun()
+    }
+
+    fun sortByGroup() {
+        _rack.value = _rack.value.sortedByGroup()
+        snapshotRack = snapshotRack.sortedByGroup()
+    }
+
+    // ==========================================
+    // TURN ACTIONS
+    // ==========================================
+
+    /** "Annuler Coup": restore the start-of-turn snapshot. */
+    fun resetTurn() {
+        _board.value = snapshotBoard
+        _rack.value = snapshotRack
+        _selectedTileIds.value = emptyList()
+    }
+
+    /** "Piocher": give up on this turn's moves and draw a tile. */
+    fun drawTile() {
+        resetTurn()
+        scope.launch { repository.drawTile() }
+    }
+
+    /**
+     * "Valider Tour": checks the board locally first so that an obvious mistake never costs
+     * a penalty, then sends the proposed board to the authoritative server.
+     * Returns true if the turn was sent.
+     */
+    fun commitTurn(): Boolean {
+        val error = validateLocally()
+        if (error != null) {
+            _messages.tryEmit(error)
+            return false
+        }
+        val board = _board.value
+        val rack = _rack.value
+        scope.launch {
+            repository.commitTurn(
+                proposedMelds = board.melds.filter { it.isNotEmpty },
+                remainingRackTileIds = rack.tiles.map { it.id }
+            )
+        }
+        return true
+    }
+
+    private fun validateLocally(): String? {
+        val board = _board.value
+        val rack = _rack.value
+        val config = repository.gameConfig.value
+
+        val placedIds = snapshotRackIds - rack.tiles.map { it.id }.toSet()
+        if (placedIds.isEmpty()) {
+            return "Déposez au moins une tuile sur la table, ou piochez pour passer votre tour."
+        }
+
+        val validation = BoardValidator.validateBoard(board, config.jokerPointStrategy)
+        if (!validation.isValid) {
+            val count = validation.invalidMelds.size
+            return if (count == 1) "Une combinaison est invalide (bordure rouge). Corrigez-la ou annulez le coup."
+            else "$count combinaisons sont invalides (bordures rouges). Corrigez-les ou annulez le coup."
+        }
+
+        if (!snapshotRack.hasMadeInitialMeld && config.initialMeldThreshold > 0) {
+            // First meld: existing melds must be untouched and new melds must come only from the rack.
+            val original = snapshotBoard.melds.associateBy { it.id }
+            for ((id, meld) in original) {
+                val now = board.findMeld(id)
+                if (now == null || now.tiles.map { it.id } != meld.tiles.map { it.id }) {
+                    return "Première pose : vous ne pouvez pas toucher aux combinaisons déjà sur la table."
+                }
+            }
+            val mine = snapshotRackIds
+            val newMelds = board.melds.filter { it.id !in original }
+            if (newMelds.any { m -> m.tiles.any { it.id !in mine } }) {
+                return "Première pose : vos nouvelles combinaisons doivent venir uniquement de votre chevalet."
+            }
+            val points = newMelds.sumOf { BoardValidator.validateMeld(it, config.jokerPointStrategy).points }
+            if (points < config.initialMeldThreshold) {
+                return "Première pose : $points pts sur ${config.initialMeldThreshold} requis."
+            }
+        }
+        return null
+    }
+
+    // ==========================================
+    // HELPERS
+    // ==========================================
+
+    private fun computeSummary(board: BoardState, rack: PlayerRack): TurnSummary {
+        val rackIds = rack.tiles.map { it.id }.toSet()
+        val placed = snapshotRackIds.count { it !in rackIds }
+        val config = repository.gameConfig.value
+        val results = board.melds.map { BoardValidator.validateMeld(it, config.jokerPointStrategy) }
+        val invalid = results.count { !it.isValid }
+        val originalIds = snapshotBoard.melds.map { it.id }.toSet()
+        val mine = snapshotRackIds
+        val newPoints = board.melds
+            .filter { it.id !in originalIds && it.tiles.all { t -> t.id in mine } }
+            .sumOf { BoardValidator.validateMeld(it, config.jokerPointStrategy).points }
+        val dirty = placed > 0 || board.melds.map { it.id to it.tiles.map { t -> t.id } } !=
+            snapshotBoard.melds.map { it.id to it.tiles.map { t -> t.id } }
+        return TurnSummary(
+            tilesPlaced = placed,
+            newMeldPoints = newPoints,
+            invalidMeldCount = invalid,
+            isDirty = dirty
+        )
+    }
+
+    /**
+     * Keeps the user's current rack order for tiles that are still there,
+     * and appends tiles that are new (drawn, penalty, or returned by a rollback).
+     */
+    private fun mergeKeepingOrder(current: List<Tile>, server: List<Tile>): List<Tile> {
+        val serverById = server.associateBy { it.id }
+        val kept = current.mapNotNull { serverById[it.id] }
+        val keptIds = kept.map { it.id }.toSet()
+        val added = server.filter { it.id !in keptIds }
+        return kept + added
+    }
+}

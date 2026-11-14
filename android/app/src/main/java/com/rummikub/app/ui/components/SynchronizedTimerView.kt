@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -16,6 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rummikub.app.ui.theme.StatusReconnecting
@@ -23,6 +23,8 @@ import com.rummikub.app.ui.theme.TimerUrgentRed
 
 /**
  * Synchronized turn timer with urgent countdown alert and grace period banner.
+ *
+ * @param compact Narrow layout for the side ribbon (grace banner wraps on two lines).
  */
 @Composable
 fun SynchronizedTimerView(
@@ -30,7 +32,8 @@ fun SynchronizedTimerView(
     totalDurationSeconds: Int,
     isGracePeriod: Boolean,
     gracePeriodCountdownSeconds: Int?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
     if (isGracePeriod) {
         val seconds = gracePeriodCountdownSeconds ?: 30
@@ -38,14 +41,15 @@ fun SynchronizedTimerView(
             modifier = modifier
                 .clip(RoundedCornerShape(8.dp))
                 .background(StatusReconnecting.copy(alpha = 0.90f))
-                .padding(horizontal = 10.dp, vertical = 4.dp),
+                .padding(horizontal = if (compact) 4.dp else 10.dp, vertical = 4.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "⚡ Reconnexion joueur... ${seconds}s",
+                text = if (compact) "⚡ Reco.\n${seconds}s" else "⚡ Reconnexion joueur... ${seconds}s",
                 color = Color.Black,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = if (compact) 10.sp else 12.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
             )
         }
         return
@@ -59,7 +63,7 @@ fun SynchronizedTimerView(
                 .background(Color(0xFF26140B))
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
-            Text("∞ Illimité", color = Color(0xFFFFD54F), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("∞", color = Color(0xFFFFD54F), fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         return
     }
@@ -88,7 +92,7 @@ fun SynchronizedTimerView(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .size(44.dp)
+            .size(if (compact) 48.dp else 44.dp)
             .then(if (isUrgent) Modifier.scale(urgentScale) else Modifier)
     ) {
         CircularProgressIndicator(
@@ -101,7 +105,7 @@ fun SynchronizedTimerView(
         Text(
             text = remainingSeconds.toString(),
             color = Color.White,
-            fontSize = 13.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Bold
         )
     }

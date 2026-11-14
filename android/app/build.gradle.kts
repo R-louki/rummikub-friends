@@ -1,9 +1,31 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose.compiler)
 }
+
+// ==========================================
+// Release signing
+// Local: android/keystore/keystore.properties (ignored by git).
+// CI:    RUMMIKUB_KEYSTORE_FILE / RUMMIKUB_KEYSTORE_PASSWORD / RUMMIKUB_KEY_ALIAS / RUMMIKUB_KEY_PASSWORD
+// Without a key, builds fall back to the debug key so local development keeps working.
+// ==========================================
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("keystore/keystore.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
+}
+
+fun signingValue(propertyKey: String, envKey: String): String? =
+    keystoreProperties.getProperty(propertyKey)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(envKey)?.takeIf { it.isNotBlank() }
+
+val releaseStorePath = signingValue("storeFile", "RUMMIKUB_KEYSTORE_FILE")
+val releaseStoreFile = releaseStorePath?.let { rootProject.file(it) }?.takeIf { it.exists() }
+val hasReleaseKey = releaseStoreFile != null
 
 android {
     namespace = "com.rummikub.app"
@@ -13,10 +35,37 @@ android {
         applicationId = "com.rummikub.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Phones only: drop the x86/x86_64 WebRTC binaries (emulators), halves the APK size.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = signingValue("storePassword", "RUMMIKUB_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "RUMMIKUB_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "RUMMIKUB_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+        }
+        debug {
+            // Same key for debug builds when available, so a release APK installs over a debug one.
+            if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     buildFeatures {
@@ -45,6 +94,7 @@ dependencies {
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
+    implementation(libs.compose.foundation)
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
@@ -55,6 +105,8 @@ dependencies {
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.common)
+
+    implementation(libs.webrtc.android)
 
     testImplementation(libs.junit)
 }

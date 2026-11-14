@@ -7,26 +7,29 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Central orchestrator for the entire Rummikub Android audio engine.
+ * Central orchestrator for the entire Rummikub audio engine (platform independent).
  *
  * Coordinates:
- * - WebRTC Live Voice Chat (UDP)
- * - Media3 ExoPlayer Focus Background Music (Gapless Loop)
- * - Tile Sound Effects (Snapping, Clicks, Buzzers)
+ * - Live Voice Chat state (VAD, push-to-talk, mutes) — the actual WebRTC transport is
+ *   provided by the Android layer through [sendSignalPacket] and the voice signal flow.
+ * - Focus background music volume/fades — actual playback through [onMusicVolumeChanged].
+ * - Tile sound effects — actual playback through [onPlaySound].
  * - Intelligent Auto-Ducking (-40% music volume during speech)
  */
 class AudioController(
     myPlayerId: String,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
-    sendSignalPacket: suspend (NetworkPacket.VoiceSignalPacket) -> Unit = {}
+    sendSignalPacket: suspend (NetworkPacket.VoiceSignalPacket) -> Unit = {},
+    onPlaySound: (GameSoundEffect, Float) -> Unit = { _, _ -> },
+    onMusicVolumeChanged: (Float) -> Unit = {}
 ) {
-    val musicPlayer: FocusMusicPlayer = FocusMusicPlayer(scope = scope)
+    val musicPlayer: FocusMusicPlayer = FocusMusicPlayer(scope = scope, onVolumeChanged = onMusicVolumeChanged)
     val voiceChat: WebRtcVoiceChat = WebRtcVoiceChat(
         myPlayerId = myPlayerId,
         scope = scope,
         sendSignalPacket = sendSignalPacket
     )
-    val sfxPlayer: SoundEffectPlayer = SoundEffectPlayer()
+    val sfxPlayer: SoundEffectPlayer = SoundEffectPlayer(onPlaySoundCallback = onPlaySound)
 
     val duckingManager: AudioDuckingManager = AudioDuckingManager(
         musicPlayer = musicPlayer,
@@ -40,6 +43,11 @@ class AudioController(
     val sfxVolume: StateFlow<Float> = sfxPlayer.sfxVolume
     val isDucked: StateFlow<Boolean> = duckingManager.isDucked
     val speakingPlayers: StateFlow<Set<String>> = voiceChat.speakingPlayers
+
+    /** The server assigns the player id after joining a room: keep the voice layer in sync. */
+    fun setMyPlayerId(playerId: String) {
+        voiceChat.myPlayerId = playerId
+    }
 
     fun setMusicVolume(volume: Float) {
         musicPlayer.setUserVolume(volume)
@@ -55,6 +63,10 @@ class AudioController(
 
     fun playTrack(track: FocusMusicTrack) {
         musicPlayer.playTrack(track)
+    }
+
+    fun stopMusic() {
+        musicPlayer.pause()
     }
 
     fun playNextDefaultTrack() {
@@ -86,6 +98,10 @@ class AudioController(
 
     fun onTurnRollback() {
         sfxPlayer.playSound(GameSoundEffect.TURN_ROLLBACK_PENALTY)
+    }
+
+    fun onCountdownTick() {
+        sfxPlayer.playSound(GameSoundEffect.COUNTDOWN_TICK)
     }
 
     fun release() {

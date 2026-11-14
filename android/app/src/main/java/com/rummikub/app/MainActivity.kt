@@ -1,15 +1,31 @@
 package com.rummikub.app
 
+import android.Manifest
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import com.rummikub.app.audio.AndroidAudioBridge
+import com.rummikub.app.game.TurnController
 import com.rummikub.app.ui.GameScreen
 import com.rummikub.app.ui.lobby.LobbyScreen
 import com.rummikub.app.ui.lobby.WaitingRoomScreen
@@ -18,7 +34,6 @@ import com.rummikub.app.ui.victory.PlayerEndScore
 import com.rummikub.app.ui.victory.VictoryScreen
 import com.rummikub.core.audio.AudioController
 import com.rummikub.core.audio.FocusMusicTrack
-import com.rummikub.core.model.EndGamePlayerScore
 import com.rummikub.core.network.GameNetworkRepository
 import kotlinx.coroutines.launch
 
@@ -32,51 +47,76 @@ enum class AppScreen {
 class MainActivity : ComponentActivity() {
 
     private lateinit var networkRepository: GameNetworkRepository
+    private lateinit var turnController: TurnController
+    private lateinit var audioBridge: AndroidAudioBridge
     private lateinit var audioController: AudioController
+
+    private val micPermissionGranted = mutableStateOf(false)
+
+    private val micPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        micPermissionGranted.value = granted
+        audioBridge.onMicPermissionResult(granted)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Force Landscape mode & immersive full screen for maximum board space
+        // Force Landscape mode, immersive full screen, and keep the screen awake during play
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemBars()
 
-        // Cloud 24/7 Authoritative Server on Render (accessible worldwide by any phone)
+        // Cloud Authoritative Server on Render (accessible worldwide by any phone)
         val serverWsUrl = "wss://rummikub-friends.onrender.com"
-        val myPlayerId = "P_" + System.currentTimeMillis().toString().takeLast(6)
 
         networkRepository = GameNetworkRepository(serverUrl = serverWsUrl)
-        audioController = AudioController(
-            myPlayerId = myPlayerId,
-            sendSignalPacket = { signal -> networkRepository.sendVoiceSignal(signal) }
-        )
+        turnController = TurnController(networkRepository, lifecycleScope)
+        audioBridge = AndroidAudioBridge(this, networkRepository, lifecycleScope)
+        audioController = audioBridge.controller
 
-        // Start initial focus ambient music track
+        // Wake the (free-tier) server up right away so creating a room is fast
+        networkRepository.warmUpServer()
+
+        // Soft ambience by default
+        audioController.setMusicVolume(0.30f)
         audioController.playTrack(FocusMusicTrack.DEFAULT_PLAYLIST.first())
+
+        val alreadyGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        micPermissionGranted.value = alreadyGranted
+        if (alreadyGranted) audioBridge.onMicPermissionResult(true)
 
         setContent {
             RummikubTheme {
+                val connectionStatus by networkRepository.connectionStatus.collectAsState()
                 val roomCode by networkRepository.roomCode.collectAsState()
                 val isHost by networkRepository.isHost.collectAsState()
                 val players by networkRepository.players.collectAsState()
                 val gameConfig by networkRepository.gameConfig.collectAsState()
-                val boardState by networkRepository.boardState.collectAsState()
+                val voiceAvailable by micPermissionGranted
 
                 var currentScreen by remember { mutableStateOf(AppScreen.LOBBY) }
                 var victoryScores by remember { mutableStateOf<List<PlayerEndScore>>(emptyList()) }
                 var winnerName by remember { mutableStateOf("") }
                 var isMeWinner by remember { mutableStateOf(false) }
 
-                // Automatically navigate to WAITING_ROOM when room is joined
+                val snackbarHostState = remember { SnackbarHostState() }
+
+                // Room joined -> waiting room; room left (or lost) -> lobby
                 LaunchedEffect(roomCode) {
-                    if (roomCode != null && currentScreen == AppScreen.LOBBY) {
-                        currentScreen = AppScreen.WAITING_ROOM
+                    if (roomCode == null) {
+                        if (currentScreen != AppScreen.LOBBY) currentScreen = AppScreen.LOBBY
+                    } else {
+                        if (currentScreen == AppScreen.LOBBY) currentScreen = AppScreen.WAITING_ROOM
+                        // Ask for the microphone once we are in a room (voice chat with friends)
+                        if (!micPermissionGranted.value) {
+                            micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
+                        }
                     }
                 }
 
-                // Automatically navigate to IN_GAME when game starts
-                LaunchedEffect(boardState.versionId) {
-                    if (boardState.versionId > 0 && currentScreen == AppScreen.WAITING_ROOM) {
+                // Game (re)started by the host -> table, from the waiting room or the victory screen
+                LaunchedEffect(Unit) {
+                    networkRepository.gameStartedEvents.collect {
                         currentScreen = AppScreen.IN_GAME
                     }
                 }
@@ -100,64 +140,120 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                AnimatedContent(
-                    targetState = currentScreen,
-                    label = "screen_transition"
-                ) { screen ->
-                    when (screen) {
-                        AppScreen.LOBBY -> {
-                            LobbyScreen(
-                                onCreateRoom = { hostName, config ->
-                                    lifecycleScope.launch {
-                                        networkRepository.createRoom(hostName, config)
-                                    }
-                                },
-                                onJoinRoom = { code, playerName ->
-                                    lifecycleScope.launch {
-                                        networkRepository.joinRoom(code, playerName)
-                                    }
-                                }
-                            )
-                        }
+                // Server errors (room not found, unauthorized, reconnect failed...)
+                LaunchedEffect(Unit) {
+                    networkRepository.errors.collect { message ->
+                        snackbarHostState.showSnackbar(
+                            message = message,
+                            withDismissAction = true,
+                            duration = SnackbarDuration.Long
+                        )
+                    }
+                }
 
-                        AppScreen.WAITING_ROOM -> {
-                            WaitingRoomScreen(
-                                roomCode = roomCode ?: "------",
-                                players = players,
-                                isHost = isHost,
-                                gameConfig = gameConfig,
-                                onStartGame = {
-                                    lifecycleScope.launch {
-                                        networkRepository.startGame()
+                // Local turn messages (invalid board, first meld too low...)
+                LaunchedEffect(Unit) {
+                    turnController.messages.collect { message ->
+                        snackbarHostState.showSnackbar(
+                            message = message,
+                            withDismissAction = true,
+                            duration = SnackbarDuration.Short
+                        )
+                    }
+                }
+
+                // Turn rollbacks decided by the server (timeout, invalid board, grace period expired)
+                LaunchedEffect(Unit) {
+                    networkRepository.turnRollbackEvents.collect { evt ->
+                        val isMine = evt.playerId == networkRepository.myPlayerId.value
+                        val playerName = networkRepository.players.value
+                            .firstOrNull { it.id == evt.playerId }?.name ?: "Un joueur"
+                        val message = if (isMine) {
+                            val penalty = if (evt.penaltyTiles.isNotEmpty()) " (+${evt.penaltyTiles.size} tuile(s) de pénalité)" else ""
+                            "Votre tour a été annulé : ${evt.reason}$penalty"
+                        } else {
+                            "Tour de $playerName annulé : ${evt.reason}"
+                        }
+                        if (isMine) audioController.onTurnRollback()
+                        snackbarHostState.showSnackbar(
+                            message = message,
+                            withDismissAction = true,
+                            duration = SnackbarDuration.Long
+                        )
+                    }
+                }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    AnimatedContent(
+                        targetState = currentScreen,
+                        label = "screen_transition"
+                    ) { screen ->
+                        when (screen) {
+                            AppScreen.LOBBY -> {
+                                LobbyScreen(
+                                    connectionStatus = connectionStatus,
+                                    onCreateRoom = { hostName, config ->
+                                        lifecycleScope.launch {
+                                            networkRepository.createRoom(hostName, config)
+                                        }
+                                    },
+                                    onJoinRoom = { code, playerName ->
+                                        lifecycleScope.launch {
+                                            networkRepository.joinRoom(code, playerName)
+                                        }
+                                    },
+                                    onCancelConnecting = { networkRepository.cancelConnecting() }
+                                )
+                            }
+
+                            AppScreen.WAITING_ROOM -> {
+                                WaitingRoomScreen(
+                                    roomCode = roomCode ?: "------",
+                                    players = players,
+                                    isHost = isHost,
+                                    gameConfig = gameConfig,
+                                    onStartGame = {
+                                        lifecycleScope.launch {
+                                            networkRepository.startGame()
+                                        }
+                                    },
+                                    onLeaveRoom = {
+                                        lifecycleScope.launch { networkRepository.leaveRoom() }
                                     }
-                                },
-                                onLeaveRoom = {
-                                    currentScreen = AppScreen.LOBBY
-                                }
-                            )
-                        }
+                                )
+                            }
 
-                        AppScreen.IN_GAME -> {
-                            GameScreen(
-                                networkRepository = networkRepository,
-                                audioController = audioController
-                            )
-                        }
+                            AppScreen.IN_GAME -> {
+                                GameScreen(
+                                    networkRepository = networkRepository,
+                                    turnController = turnController,
+                                    audioController = audioController,
+                                    voiceAvailable = voiceAvailable
+                                )
+                            }
 
-                        AppScreen.VICTORY -> {
-                            VictoryScreen(
-                                scores = victoryScores,
-                                winnerName = winnerName,
-                                isMeWinner = isMeWinner,
-                                onPlayAgain = {
-                                    currentScreen = AppScreen.WAITING_ROOM
-                                },
-                                onBackToLobby = {
-                                    currentScreen = AppScreen.LOBBY
-                                }
-                            )
+                            AppScreen.VICTORY -> {
+                                VictoryScreen(
+                                    scores = victoryScores,
+                                    winnerName = winnerName,
+                                    isMeWinner = isMeWinner,
+                                    onPlayAgain = {
+                                        currentScreen = AppScreen.WAITING_ROOM
+                                    },
+                                    onBackToLobby = {
+                                        lifecycleScope.launch { networkRepository.leaveRoom() }
+                                    }
+                                )
+                            }
                         }
                     }
+
+                    SnackbarHost(
+                        hostState = snackbarHostState,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 8.dp)
+                    )
                 }
             }
         }
@@ -173,6 +269,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        audioController.release()
+        audioBridge.release()
     }
 }

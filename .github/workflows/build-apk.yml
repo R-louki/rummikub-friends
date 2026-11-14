@@ -34,15 +34,38 @@ jobs:
       - name: Configure local.properties
         run: echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
 
-      - name: Build Debug APK
-        working-directory: ./android
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+      # Release signing key, provided as GitHub secrets (Settings > Secrets and variables > Actions):
+      #   RUMMIKUB_KEYSTORE_BASE64   base64 of android/keystore/rummikub-release.jks
+      #   RUMMIKUB_KEYSTORE_PASSWORD, RUMMIKUB_KEY_ALIAS, RUMMIKUB_KEY_PASSWORD
+      # Without them the APKs are signed with the debug key.
+      - name: Restore release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.RUMMIKUB_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p android/keystore
+            echo "$KEYSTORE_B64" | base64 -d > android/keystore/rummikub-release.jks
+            echo "RUMMIKUB_KEYSTORE_FILE=keystore/rummikub-release.jks" >> "$GITHUB_ENV"
+            echo "Release keystore restored."
+          else
+            echo "No release keystore secret: APKs will use the debug key."
+          fi
 
-      - name: Upload Installable APK
+      - name: Build Debug & Release APKs
+        working-directory: ./android
+        env:
+          RUMMIKUB_KEYSTORE_PASSWORD: ${{ secrets.RUMMIKUB_KEYSTORE_PASSWORD }}
+          RUMMIKUB_KEY_ALIAS: ${{ secrets.RUMMIKUB_KEY_ALIAS }}
+          RUMMIKUB_KEY_PASSWORD: ${{ secrets.RUMMIKUB_KEY_PASSWORD }}
+        run: gradle :app:assembleDebug :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Upload Installable APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Rummikub-Friends-Debug.apk
-          path: '**/build/outputs/apk/debug/*.apk'
+          name: Rummikub-Friends-APKs
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/release/*.apk
           retention-days: 14
 
       - name: Run Unit Tests (Rules, Audio Ducking, Network)

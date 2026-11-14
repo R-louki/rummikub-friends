@@ -39,7 +39,7 @@ class AudioEngineTest {
         voiceChat.handleRemoteVoiceSignal(
             NetworkPacket.VoiceSignalPacket(
                 fromPlayerId = "P2",
-                type = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
+                signalType = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
                 isSpeaking = true
             )
         )
@@ -54,7 +54,7 @@ class AudioEngineTest {
         voiceChat.handleRemoteVoiceSignal(
             NetworkPacket.VoiceSignalPacket(
                 fromPlayerId = "P2",
-                type = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
+                signalType = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
                 isSpeaking = false
             )
         )
@@ -114,7 +114,7 @@ class AudioEngineTest {
         voiceChat.handleRemoteVoiceSignal(
             NetworkPacket.VoiceSignalPacket(
                 fromPlayerId = "P2",
-                type = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
+                signalType = NetworkPacket.VoiceSignalPacket.SignalType.VAD_SPEAKING_STATUS,
                 isSpeaking = true
             )
         )
