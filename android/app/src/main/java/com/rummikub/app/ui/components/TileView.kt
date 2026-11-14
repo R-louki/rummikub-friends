@@ -85,7 +85,7 @@ fun TileView(
     ) {
         if (tile.isJoker) {
             Column(
-                horizontalAlignment = Alignment.CenterVertically,
+                horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
@@ -105,7 +105,7 @@ fun TileView(
             }
         } else {
             Column(
-                horizontalAlignment = Alignment.CenterVertically,
+                horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(

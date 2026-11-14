@@ -62,7 +62,7 @@ fun PlayerAvatarView(
         modifier = modifier
             .width(84.dp)
             .padding(4.dp),
-        horizontalAlignment = Alignment.CenterVertically
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             contentAlignment = Alignment.Center,

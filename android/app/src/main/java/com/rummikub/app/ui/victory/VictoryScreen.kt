@@ -63,10 +63,10 @@ fun VictoryScreen(
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterVertically
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header Banner
-                Column(horizontalAlignment = Alignment.CenterVertically) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = if (isMeWinner) "🏆 VICTOIRE ÉCLATANTE !" else "🎉 PARTIE TERMINÉE",
                         fontSize = 22.sp,

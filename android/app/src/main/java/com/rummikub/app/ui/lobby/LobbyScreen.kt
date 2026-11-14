@@ -42,12 +42,12 @@ fun LobbyScreen(
         contentAlignment = Alignment.Center
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp),
             modifier = Modifier.padding(24.dp)
         ) {
             // Game Brand Logo & Subtitle
-            Column(horizontalAlignment = Alignment.CenterVertically) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "RUMMIKUB",
                     fontSize = 38.sp,

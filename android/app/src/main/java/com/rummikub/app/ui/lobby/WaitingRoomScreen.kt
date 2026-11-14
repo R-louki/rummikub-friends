@@ -60,7 +60,7 @@ fun WaitingRoomScreen(
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterVertically
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header with Room Code
                 Row(
