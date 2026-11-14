@@ -36,7 +36,13 @@ jobs:
 
       - name: Build Debug APK
         working-directory: ./android
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        run: |
+          gradle :app:assembleDebug --stacktrace --no-daemon > ../build_out.txt 2>&1 || {
+            tail -n 80 ../build_out.txt
+            ERR=$(grep -A 4 -E 'What went wrong|Execution failed|Caused by|e: ' ../build_out.txt | head -n 6 | tr '\n' ' ')
+            echo "::error title=Gradle Error::$ERR"
+            exit 1
+          }
 
       - name: Upload Installable APK
         uses: actions/upload-artifact@v4
