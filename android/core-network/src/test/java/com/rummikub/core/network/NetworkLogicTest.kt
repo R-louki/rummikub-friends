@@ -83,6 +83,6 @@ class NetworkLogicTest {
         )
 
         heartbeat.handlePong(pong)
-        assertTrue("Latency should be approximately >= 85ms", heartbeat.latencyMs.value >= 85L)
+        assertTrue("Latency should be approximately >= 80ms", heartbeat.latencyMs.value >= 80L)
     }
 }

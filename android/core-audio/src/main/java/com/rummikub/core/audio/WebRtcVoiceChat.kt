@@ -127,9 +127,7 @@ class WebRtcVoiceChat(
             if (_isLocalSpeaking.value && vadHangoverJob?.isActive != true) {
                 vadHangoverJob = scope.launch {
                     delay(vadHangoverMs)
-                    if (System.currentTimeMillis() - lastSpeakingTimeMs >= vadHangoverMs) {
-                        updateSpeakingState(false)
-                    }
+                    updateSpeakingState(false)
                 }
             }
         }
