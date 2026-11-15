@@ -8,6 +8,11 @@ import com.rummikub.core.model.NetworkPacket
 import com.rummikub.core.model.NetworkPacket.VoiceSignalPacket.SignalType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.webrtc.AudioSource
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -63,7 +68,57 @@ class WebRtcVoiceEngine(
 
     val isRunning: Boolean get() = factory != null
 
+    /** Human-readable state of the live voice, shown in the game menu (helps to find why it is silent). */
+    private val _status = MutableStateFlow("démarrage…")
+    val status: StateFlow<String> = _status.asStateFlow()
+    private var retryJob: Job? = null
+
+    private fun refreshStatus() {
+        _status.value = when {
+            factory == null -> "inactive"
+            peers.isEmpty() -> "en attente d'un autre joueur"
+            else -> {
+                val ok = peers.values.count {
+                    it.ice == PeerConnection.IceConnectionState.CONNECTED ||
+                        it.ice == PeerConnection.IceConnectionState.COMPLETED
+                }
+                when {
+                    ok == peers.size -> "connectée (${peers.size} joueur${if (peers.size > 1) "s" else ""})"
+                    ok > 0 -> "$ok/${peers.size} connectés"
+                    peers.values.any { it.ice == PeerConnection.IceConnectionState.FAILED } -> "échec réseau (relais nécessaire)"
+                    else -> "connexion en cours…"
+                }
+            }
+        }
+    }
+
+    /**
+     * An offer sent while the other phone had not started its voice yet is simply lost: the player
+     * with the lower id offers again every few seconds until the link is up.
+     */
+    private fun startRetryLoop() {
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            while (true) {
+                delay(4_000)
+                val now = System.currentTimeMillis()
+                for ((id, peer) in peers.entries.toList()) {
+                    val up = peer.ice == PeerConnection.IceConnectionState.CONNECTED ||
+                        peer.ice == PeerConnection.IceConnectionState.COMPLETED
+                    if (!up && myId < id && now - peer.createdAt > 8_000) {
+                        peers.remove(id)?.let { try { it.pc.close() } catch (_: Exception) {} }
+                        createPeer(id)
+                        makeOffer(id)
+                    }
+                }
+                refreshStatus()
+            }
+        }
+    }
+
     private class Peer(val pc: PeerConnection) {
+        val createdAt = System.currentTimeMillis()
+        @Volatile var ice: PeerConnection.IceConnectionState = PeerConnection.IceConnectionState.NEW
         var remoteTrack: org.webrtc.AudioTrack? = null
         var remoteDescriptionSet = false
         val pendingCandidates = ArrayList<IceCandidate>()
@@ -122,6 +177,8 @@ class WebRtcVoiceEngine(
 
         applyRoute()
         try { audioManager.registerAudioDeviceCallback(deviceCallback, main) } catch (_: Exception) {}
+        startRetryLoop()
+        refreshStatus()
     }
 
     /** True when a Bluetooth or wired headset / speaker is the current audio output. */
@@ -164,6 +221,8 @@ class WebRtcVoiceEngine(
     }
 
     fun stop() {
+        retryJob?.cancel()
+        retryJob = null
         try { audioManager.unregisterAudioDeviceCallback(deviceCallback) } catch (_: Exception) {}
         for ((_, peer) in peers) {
             try { peer.pc.close() } catch (_: Exception) {}
@@ -175,6 +234,7 @@ class WebRtcVoiceEngine(
         localTrack = null
         audioSource = null
         factory = null
+        refreshStatus()
         try {
             audioManager.mode = AudioManager.MODE_NORMAL
             @Suppress("DEPRECATION")
@@ -224,6 +284,8 @@ class WebRtcVoiceEngine(
                 }
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+                peers[remoteId]?.ice = state
+                refreshStatus()
                 if (state == PeerConnection.IceConnectionState.FAILED && myId < remoteId) {
                     // Try again from scratch
                     peers.remove(remoteId)?.let { try { it.pc.close() } catch (_: Exception) {} }
@@ -245,6 +307,7 @@ class WebRtcVoiceEngine(
         pc.addTrack(track, listOf("RUMMI_STREAM"))
         val peer = Peer(pc)
         peers[remoteId] = peer
+        refreshStatus()
         return peer
     }
 
@@ -275,6 +338,11 @@ class WebRtcVoiceEngine(
         when (packet.signalType) {
             SignalType.OFFER -> {
                 val sdp = packet.sdp ?: return
+                val existing = peers[from]
+                if (existing != null && existing.remoteDescriptionSet) {
+                    peers.remove(from)
+                    try { existing.pc.close() } catch (_: Exception) {}
+                }
                 val peer = peers[from] ?: createPeer(from) ?: return
                 peer.pc.setRemoteDescription(object : SimpleSdpObserver() {
                     override fun onSetSuccess() {

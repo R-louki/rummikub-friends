@@ -61,7 +61,8 @@ fun GameScreen(
     audioBridge: AndroidAudioBridge,
     voiceAvailable: Boolean,
     onAddMusic: () -> Unit,
-    onOpenTheme: () -> Unit = {}
+    onOpenTheme: () -> Unit = {},
+    onRequestMic: () -> Unit = {}
 ) {
     val view = LocalView.current
 
@@ -151,6 +152,15 @@ fun GameScreen(
             delay(1000)
             s -= 1
             graceSeconds = s
+        }
+    }
+
+    // Valid moves that were not confirmed are sent in the last two seconds instead of being lost
+    var autoCommitted by remember { mutableStateOf(false) }
+    LaunchedEffect(serverBoard.versionId, serverBoard.activePlayerId) { autoCommitted = false }
+    LaunchedEffect(remainingMillis) {
+        if (isMyTurn && !autoCommitted && !actionInFlight && gameConfig.turnDurationSeconds > 0 && remainingMillis in 1..2000) {
+            if (turnController.autoCommitIfValid()) autoCommitted = true
         }
     }
 
@@ -336,7 +346,8 @@ fun GameScreen(
                         glyphSize = 19.sp
                     ) {
                         view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                        turnController.drawTile()
+                        // Never throw away legal moves by drawing: ask to confirm or cancel them first
+                        if (turnController.hasValidPendingMoves()) turnController.notifyPendingMoves() else turnController.drawTile()
                     }
                     Text(
                         text = "pioche ${serverBoard.drawPileCount}",
@@ -375,7 +386,19 @@ fun GameScreen(
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // Microphone: push-to-talk button (hold), or mute toggle in open-mic mode
+                // Microphone: push-to-talk button (hold), or mute toggle in open-mic mode.
+                // Without the permission a crossed-out mic is shown: touch it to allow the microphone.
+                if (!voiceAvailable && gameConfig.botCount == 0) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF7F1D1D))
+                            .border(2.dp, StatusDisconnected, CircleShape)
+                            .clickable { onRequestMic() },
+                        contentAlignment = Alignment.Center
+                    ) { Text("🎙️✕", fontSize = 13.sp) }
+                }
                 if (voiceAvailable) {
                     if (voiceMode == VoiceChatMode.PUSH_TO_TALK) {
                         val pressed by audioController.voiceChat.isPushToTalkPressed.collectAsState()
@@ -470,6 +493,21 @@ fun GameScreen(
                                 prefs.edit().putInt("drag", next).apply()
                             }
                         )
+                        val voiceStatus by audioBridge.voiceStatus.collectAsState()
+                        val botGame = (gameConfig.botCount > 0)
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "🎙️ Voix : " + when {
+                                        botGame -> "désactivée contre l'ordinateur"
+                                        !voiceAvailable -> "micro non autorisé (touchez)"
+                                        else -> voiceStatus
+                                    },
+                                    fontSize = 13.sp
+                                )
+                            },
+                            onClick = { menuOpen = false; if (!voiceAvailable) onRequestMic() }
+                        )
                         DropdownMenuItem(
                             text = { Text("🎨 Thème") },
                             onClick = { menuOpen = false; onOpenTheme() }
@@ -494,7 +532,7 @@ fun GameScreen(
                     fontSize = 34.sp,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(x = 68.dp, y = (30 + index * 96).dp - (50 * rise.value).dp)
+                        .offset(x = 70.dp, y = (70 + index * 100).dp - (40 * rise.value).dp)
                         .graphicsLayer {
                             alpha = (1f - rise.value * rise.value)
                             val sc = 0.6f + 0.6f * minOf(1f, rise.value * 4f)

@@ -493,6 +493,19 @@ class TurnController(
      * a penalty, then sends the proposed board to the authoritative server.
      * Returns true if the turn was sent.
      */
+    /** True when the arrangement on the table is already a legal move that only needs a tap on Valider. */
+    fun hasValidPendingMoves(): Boolean = validateLocally() == null
+
+    fun notifyPendingMoves() {
+        _messages.tryEmit("Des tuiles valides sont posées : validez avec ✓ (ou annulez avec ↺ pour piocher).")
+    }
+
+    /** The timer is about to run out: send the legal arrangement instead of letting it be lost. */
+    fun autoCommitIfValid(): Boolean {
+        if (!hasValidPendingMoves()) return false
+        return commitTurn()
+    }
+
     fun commitTurn(): Boolean {
         val error = validateLocally()
         if (error != null) {

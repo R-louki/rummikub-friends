@@ -94,6 +94,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Ask for the microphone; when Android will not ask again, open the app settings instead. */
+    private fun requestMicOrOpenSettings() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            micPermissionGranted.value = true
+            audioBridge.onMicPermissionResult(true)
+            return
+        }
+        if (shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) || !askedMicBefore) {
+            askedMicBefore = true
+            micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(android.net.Uri.fromParts("package", packageName, null))
+            )
+            Toast.makeText(this, "Autorisez le micro dans « Autorisations »", Toast.LENGTH_LONG).show()
+        }
+    }
+    private var askedMicBefore = false
+
     private val micPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         micPermissionGranted.value = granted
         audioBridge.onMicPermissionResult(granted)
@@ -445,7 +465,8 @@ class MainActivity : ComponentActivity() {
                                     audioBridge = audioBridge,
                                     voiceAvailable = voiceAvailable,
                                     onAddMusic = { pickMusic.launch(arrayOf("audio/*")) },
-                                    onOpenTheme = { showTheme = true }
+                                    onOpenTheme = { showTheme = true },
+                                    onRequestMic = { requestMicOrOpenSettings() }
                                 )
                             }
 

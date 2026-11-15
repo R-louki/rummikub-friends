@@ -45,6 +45,7 @@ class AndroidAudioBridge(
     private var lastMuted: Set<String> = emptySet()
 
     val isVoiceRunning: Boolean get() = voice.isRunning
+    val voiceStatus: kotlinx.coroutines.flow.StateFlow<String> get() = voice.status
 
     init {
         val voiceChat = controller.voiceChat
