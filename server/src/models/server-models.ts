@@ -13,6 +13,8 @@ export interface ServerPlayer {
   name: string;
   sessionToken: string;
   isHost: boolean;
+  /** Computer player: no socket, plays by itself on its turn. */
+  isBot?: boolean;
   isConnected: boolean;
   rack: PlayerRack;
   lastHeartbeatTime: number;

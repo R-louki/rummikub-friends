@@ -47,6 +47,8 @@ export interface GameConfig {
   penaltyTilesCount: number;
   maxPlayers: number;
   gracePeriodSeconds: number;
+  /** Number of computer players added to the room (0 = friends only). */
+  botCount: number;
 }
 
 export const DEFAULT_GAME_CONFIG: GameConfig = {
@@ -57,5 +59,6 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   validationMode: 'STRICT_AUTOMATIC',
   penaltyTilesCount: 3,
   maxPlayers: 4,
-  gracePeriodSeconds: 30
+  gracePeriodSeconds: 30,
+  botCount: 0
 };

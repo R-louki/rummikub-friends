@@ -28,11 +28,15 @@ export class RoomManager {
 
   createRoom(hostName: string, socket: WebSocket, config?: GameConfig): { room: Room; playerId: string; sessionToken: string } {
     const roomCode = this.generateRoomCode();
-    const room = new Room(roomCode, config);
+    const botCount = Math.max(0, Math.min(3, Math.floor(config?.botCount ?? 0)));
+    // Against the computer the table is exactly the human + the bots: nobody else can join.
+    const effectiveConfig = botCount > 0 && config ? { ...config, botCount, maxPlayers: botCount + 1 } : config;
+    const room = new Room(roomCode, effectiveConfig);
     this.rooms.set(roomCode, room);
 
     const playerId = 'P_' + Math.random().toString(36).substring(2, 9);
     const { sessionToken } = room.addPlayer(playerId, hostName, socket);
+    if (botCount > 0) room.addBots(botCount);
 
     this.socketToRoom.set(socket, { roomCode, playerId });
     console.log(`[RoomManager] Salon créé: ${roomCode} par ${hostName} (${playerId})`);
@@ -134,7 +138,7 @@ export class RoomManager {
     const now = Date.now();
     for (const [code, room] of this.rooms) {
       for (const [pid, player] of room.players) {
-        if (player.isConnected && (now - player.lastHeartbeatTime) > HEARTBEAT_TIMEOUT_MS) {
+        if (!player.isBot && player.isConnected && (now - player.lastHeartbeatTime) > HEARTBEAT_TIMEOUT_MS) {
           console.warn(`[RoomManager] Heartbeat timeout pour ${player.name} (${pid}) dans le salon ${code}`);
           const socket = room.sockets.get(pid);
           if (socket) {

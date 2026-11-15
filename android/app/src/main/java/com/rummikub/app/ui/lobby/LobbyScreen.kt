@@ -33,7 +33,8 @@ fun LobbyScreen(
     connectionStatus: ConnectionStatus,
     onCreateRoom: (hostName: String, config: GameConfig) -> Unit,
     onJoinRoom: (roomCode: String, playerName: String) -> Unit,
-    onCancelConnecting: () -> Unit
+    onCancelConnecting: () -> Unit,
+    onOpenAudio: () -> Unit = {}
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
@@ -123,6 +124,14 @@ fun LobbyScreen(
                     }
                 }
             }
+        }
+
+        // Audio settings / "Ma musique"
+        TextButton(
+            onClick = onOpenAudio,
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+        ) {
+            Text("🎵 Musique & audio", color = Color(0xFFFFD54F), fontSize = 12.sp)
         }
 
         // Dialogs

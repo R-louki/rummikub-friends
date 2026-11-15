@@ -33,6 +33,8 @@ fun CreateRoomDialog(
     var jokerPointStrategy by remember { mutableStateOf(JokerPointStrategy.REPLACED_TILE_VALUE) }
     var validationMode by remember { mutableStateOf(ValidationMode.STRICT_AUTOMATIC) }
     var maxPlayers by remember { mutableStateOf(4) }
+    var vsComputer by remember { mutableStateOf(false) }
+    var computerTableSize by remember { mutableStateOf(2) } // total players at the table, 2..4
     var penaltyTiles by remember { mutableStateOf(3) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -69,6 +71,32 @@ fun CreateRoomDialog(
                 }
 
                 Divider(color = WoodBorder)
+
+                // Mode: friends online or against the computer
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(
+                        selected = !vsComputer,
+                        onClick = { vsComputer = false },
+                        label = { Text("👥 Entre amis (en ligne)", fontSize = 11.sp) }
+                    )
+                    FilterChip(
+                        selected = vsComputer,
+                        onClick = { vsComputer = true },
+                        label = { Text("🤖 Contre l'ordinateur", fontSize = 11.sp) }
+                    )
+                }
+                if (vsComputer) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Joueurs à la table :", fontSize = 12.sp, color = Color.White)
+                        listOf(2, 3, 4).forEach { n ->
+                            FilterChip(
+                                selected = computerTableSize == n,
+                                onClick = { computerTableSize = n },
+                                label = { Text("$n (vous + ${n - 1} ordi)", fontSize = 10.sp) }
+                            )
+                        }
+                    }
+                }
 
                 // Nom du joueur
                 OutlinedTextField(
@@ -115,14 +143,16 @@ fun CreateRoomDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("👥 Joueurs max :", fontSize = 12.sp, color = Color.White)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            listOf(2, 3, 4).forEach { count ->
-                                FilterChip(
-                                    selected = maxPlayers == count,
-                                    onClick = { maxPlayers = count },
-                                    label = { Text("$count") }
-                                )
+                        if (!vsComputer) {
+                            Text("👥 Joueurs max :", fontSize = 12.sp, color = Color.White)
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(2, 3, 4).forEach { count ->
+                                    FilterChip(
+                                        selected = maxPlayers == count,
+                                        onClick = { maxPlayers = count },
+                                        label = { Text("$count") }
+                                    )
+                                }
                             }
                         }
                     }
@@ -173,15 +203,16 @@ fun CreateRoomDialog(
                             jokerAllowedInInitialMeld = jokerAllowedInInitial,
                             jokerPointStrategy = jokerPointStrategy,
                             validationMode = validationMode,
-                            maxPlayers = maxPlayers,
-                            penaltyTilesCount = penaltyTiles
+                            maxPlayers = if (vsComputer) computerTableSize else maxPlayers,
+                            penaltyTilesCount = penaltyTiles,
+                            botCount = if (vsComputer) computerTableSize - 1 else 0
                         )
                         onCreateRoom(hostName.trim().ifEmpty { "Hôte" }, config)
                     },
                     modifier = Modifier.fillMaxWidth().height(42.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
                 ) {
-                    Text("✓ Ouvrir la Table & Inviter", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(if (vsComputer) "▶ Jouer contre l'ordinateur" else "✓ Ouvrir la Table & Inviter", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
         }

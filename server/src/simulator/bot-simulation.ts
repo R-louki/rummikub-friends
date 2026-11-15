@@ -66,7 +66,8 @@ async function runEndToEndSimulation() {
     validationMode: 'STRICT_AUTOMATIC',
     penaltyTilesCount: 3,
     maxPlayers: 4,
-    gracePeriodSeconds: 8
+    gracePeriodSeconds: 8,
+    botCount: 0
   };
 
   alice.send({

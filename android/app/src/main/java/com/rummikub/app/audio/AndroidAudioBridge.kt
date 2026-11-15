@@ -2,6 +2,7 @@ package com.rummikub.app.audio
 
 import android.content.Context
 import com.rummikub.core.audio.AudioController
+import com.rummikub.core.audio.FocusGenre
 import com.rummikub.core.audio.VoiceChatMode
 import com.rummikub.core.network.GameNetworkRepository
 import kotlinx.coroutines.CoroutineScope
@@ -19,7 +20,11 @@ class AndroidAudioBridge(
     private val scope: CoroutineScope
 ) {
     private val sfx = SfxSynth()
-    private val music = MusicEngine(context)
+    val library = MusicLibrary(context)
+    private val music = MusicEngine(context) { id ->
+        // The player moved on to the next file of the playlist by itself: reflect it in the UI state.
+        library.tracks.value.firstOrNull { it.id == id }?.let { controller.musicPlayer.playTrack(it) }
+    }
 
     val controller: AudioController = AudioController(
         myPlayerId = "",
@@ -49,7 +54,14 @@ class AndroidAudioBridge(
         scope.launch {
             combine(musicPlayer.currentTrack, musicPlayer.isPlaying) { track, playing -> track to playing }
                 .collect { (track, playing) ->
-                    if (track != null && playing) music.play(track) else music.pause()
+                    when {
+                        track == null || !playing -> music.pause()
+                        track.genre == FocusGenre.CUSTOM -> {
+                            val list = library.tracks.value
+                            if (list.any { it.id == track.id }) music.playPlaylist(list, track.id)
+                        }
+                        else -> music.play(track)
+                    }
                 }
         }
         scope.launch { musicPlayer.effectiveVolume.collect { music.setVolume(it) } }
@@ -91,6 +103,17 @@ class AndroidAudioBridge(
             }
         }
         scope.launch { voiceChat.voiceVolume.collect { voice.setRemoteVolume(it) } }
+    }
+
+    /** Skips to the next file of the player's own playlist (no effect on built-in ambience). */
+    fun nextTrack() {
+        music.next()
+    }
+
+    /** Removes a track from the library; stops the music if it was the one playing. */
+    fun removeTrack(trackId: String) {
+        if (controller.musicPlayer.currentTrack.value?.id == trackId) controller.stopMusic()
+        library.remove(trackId)
     }
 
     fun onMicPermissionResult(granted: Boolean) {

@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { Room } from './room.js';
 import { RoomManager } from './room-manager.js';
 import { createStandardDeck } from '../engine/deck.js';
+import { BoardValidator } from '../engine/board-validator.js';
 import { DEFAULT_GAME_CONFIG, MeldSet } from '../models/types.js';
 import { WebSocket } from 'ws';
 
@@ -317,4 +318,69 @@ test('Room: scores accumulate over several rounds', () => {
   assert.strictEqual(over2.scores.find((s: any) => s.playerId === 'P1').totalScore, bobPenalty1 + bobPenalty2);
   assert.strictEqual(room.getPlayerSummaries().find(p => p.id === 'P2').totalScore, -(bobPenalty1 + bobPenalty2));
   room.dispose();
+});
+
+test('Bots: computer players play whole games by themselves without breaking the rules', () => {
+  mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  try {
+    for (let game = 0; game < 6; game++) {
+      const room = new Room('BOT' + game, { ...DEFAULT_GAME_CONFIG, initialMeldThreshold: game % 2 === 0 ? 30 : 0, turnDurationSeconds: 60 });
+      const human = ws();
+      room.addPlayer('H1', 'Humain', asWs(human));
+      room.addBots(3);
+      room.botThinkMs = [100, 200];
+      assert.strictEqual(room.players.size, 4);
+      room.startGame();
+
+      // The human never acts: the 60 s turn timer penalises them, the bots keep playing.
+      let seconds = 0;
+      while (room.status === 'IN_GAME' && seconds < 3000) {
+        mock.timers.tick(1000);
+        seconds++;
+      }
+
+      // Tile conservation: every tile is in exactly one place
+      const everything = [
+        ...Array.from(room.players.values()).flatMap(p => p.rack.tiles.map(t => t.id)),
+        ...room.boardState.melds.flatMap(m => m.tiles.map(t => t.id))
+      ];
+      assert.strictEqual(new Set(everything).size, everything.length, 'no tile may be duplicated');
+      assert.ok(everything.length <= 106);
+
+      // Whatever is on the table is valid
+      const validation = BoardValidatorFor(room.boardState.melds);
+      assert.strictEqual(validation, true, 'the table must only hold valid melds');
+
+      const botsPlayed = room.boardState.melds.length > 0 || room.status === 'FINISHED';
+      assert.ok(botsPlayed, 'bots must have laid down melds or finished the game');
+      room.dispose();
+    }
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+function BoardValidatorFor(melds: MeldSet[]): boolean {
+  return melds.every(m => BoardValidator.validateMeld(m).isValid);
+}
+
+test('Bots: every bot-only game ends (empty pile and no move = blocked game, lowest total wins)', () => {
+  mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  try {
+    for (let game = 0; game < 6; game++) {
+      const room = new Room('END' + game, { ...DEFAULT_GAME_CONFIG, turnDurationSeconds: 0 });
+      room.addBots(3);
+      room.botThinkMs = [20, 30];
+      room.startGame();
+      let ticks = 0;
+      while (room.status === 'IN_GAME' && ticks < 20000) {
+        mock.timers.tick(50);
+        ticks++;
+      }
+      assert.strictEqual(room.status, 'FINISHED', 'the game must end by itself');
+      room.dispose();
+    }
+  } finally {
+    mock.timers.reset();
+  }
 });

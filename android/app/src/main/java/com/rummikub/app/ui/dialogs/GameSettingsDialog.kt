@@ -33,6 +33,7 @@ fun GameSettingsDialog(
     isMicMuted: Boolean,
     isMusicPlaying: Boolean,
     currentTrack: FocusMusicTrack?,
+    userTracks: List<FocusMusicTrack>,
     gameConfig: GameConfig,
     onMusicVolumeChanged: (Float) -> Unit,
     onVoiceVolumeChanged: (Float) -> Unit,
@@ -41,6 +42,9 @@ fun GameSettingsDialog(
     onToggleMic: () -> Unit,
     onTrackSelected: (FocusMusicTrack) -> Unit,
     onStopMusic: () -> Unit,
+    onAddMusic: () -> Unit,
+    onRemoveTrack: (FocusMusicTrack) -> Unit,
+    onNextTrack: () -> Unit,
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
@@ -168,6 +172,65 @@ fun GameSettingsDialog(
                     onValueChange = onMusicVolumeChanged,
                     colors = SliderDefaults.colors(thumbColor = Color(0xFFFFD54F), activeTrackColor = Color(0xFFFFD54F))
                 )
+
+                // Player's own music (files picked on the phone)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🎶 Ma musique (fichiers du téléphone)", fontSize = 12.sp, color = Color(0xFFFFD54F))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (userTracks.size > 1) {
+                            Button(
+                                onClick = onNextTrack,
+                                modifier = Modifier.height(30.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3E2723)),
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) { Text("⏭ Suivant", fontSize = 10.sp, color = Color.White) }
+                        }
+                        Button(
+                            onClick = onAddMusic,
+                            modifier = Modifier.height(30.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) { Text("+ Ajouter", fontSize = 10.sp, color = Color.White) }
+                    }
+                }
+                if (userTracks.isEmpty()) {
+                    Text(
+                        text = "Ajoutez vos morceaux (mp3, m4a...) : ils s'enchaînent en boucle pendant la partie.",
+                        fontSize = 10.sp,
+                        color = Color(0x99FFFFFF)
+                    )
+                } else {
+                    userTracks.forEach { track ->
+                        val isCurrent = isMusicPlaying && currentTrack?.id == track.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isCurrent) Color(0x33FF8F00) else Color(0x22FFFFFF))
+                                .padding(start = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = { onTrackSelected(track) }, modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = (if (isCurrent) "▶ " else "") + track.title,
+                                    fontSize = 11.sp,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            IconButton(onClick = { onRemoveTrack(track) }, modifier = Modifier.size(32.dp)) {
+                                Text("✕", color = Color(0xFFFF8A80), fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
 
                 Divider(color = WoodBorder)
 

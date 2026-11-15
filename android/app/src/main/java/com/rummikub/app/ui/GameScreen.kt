@@ -25,11 +25,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rummikub.app.audio.AndroidAudioBridge
 import com.rummikub.app.game.DropTarget
 import com.rummikub.app.game.TurnController
 import com.rummikub.app.ui.board.BoardGrid
 import com.rummikub.app.ui.components.SynchronizedTimerView
-import com.rummikub.app.ui.dialogs.GameSettingsDialog
+import com.rummikub.app.ui.dialogs.AudioSettingsHost
 import com.rummikub.app.ui.rack.PlayerRackView
 import com.rummikub.app.ui.theme.*
 import com.rummikub.core.audio.AudioController
@@ -50,7 +51,9 @@ fun GameScreen(
     networkRepository: GameNetworkRepository,
     turnController: TurnController,
     audioController: AudioController,
-    voiceAvailable: Boolean
+    audioBridge: AndroidAudioBridge,
+    voiceAvailable: Boolean,
+    onAddMusic: () -> Unit
 ) {
     val view = LocalView.current
 
@@ -410,22 +413,10 @@ fun GameScreen(
 
         // Settings Dialog
         if (showSettingsDialog) {
-            GameSettingsDialog(
-                musicVolume = musicVolume,
-                voiceVolume = voiceVolume,
-                sfxVolume = sfxVolume,
-                voiceMode = voiceMode,
-                isMicMuted = isMicMuted,
-                isMusicPlaying = isMusicPlaying,
-                currentTrack = currentTrack,
+            AudioSettingsHost(
+                audioBridge = audioBridge,
                 gameConfig = gameConfig,
-                onMusicVolumeChanged = { audioController.setMusicVolume(it) },
-                onVoiceVolumeChanged = { audioController.setVoiceVolume(it) },
-                onSfxVolumeChanged = { audioController.setSfxVolume(it) },
-                onVoiceModeChanged = { audioController.voiceChat.setMode(it) },
-                onToggleMic = { audioController.toggleMicrophoneMute() },
-                onTrackSelected = { audioController.playTrack(it) },
-                onStopMusic = { audioController.stopMusic() },
+                onAddMusic = onAddMusic,
                 onDismiss = { showSettingsDialog = false }
             )
         }

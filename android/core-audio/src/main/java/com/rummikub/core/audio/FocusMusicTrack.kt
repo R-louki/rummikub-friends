@@ -7,7 +7,8 @@ enum class FocusGenre(val displayName: String) {
     LO_FI("Café"),
     AMBIENT("Vagues"),
     WHITE_NOISE("Pluie"),
-    SOFT_JAZZ("Jazz")
+    SOFT_JAZZ("Jazz"),
+    CUSTOM("Ma musique")
 }
 
 /**

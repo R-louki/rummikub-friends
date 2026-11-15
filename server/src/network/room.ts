@@ -11,6 +11,7 @@ import { ServerPlayer, StateDelta, RoomStatus } from '../models/server-models.js
 import { createStandardDeck } from '../engine/deck.js';
 import { BoardValidator } from '../engine/board-validator.js';
 import { InitialMeldEvaluator } from '../engine/initial-meld-evaluator.js';
+import { computeBotMove } from '../engine/bot-player.js';
 import crypto from 'node:crypto';
 
 export type DeckFactory = () => Tile[];
@@ -32,6 +33,8 @@ export class Room {
   /** Running total of each player's points over all the rounds played in this room. */
   private readonly totalScores = new Map<string, number>();
   private roundNumber = 0;
+  /** Consecutive turns passed with an empty draw pile; a full round of passes blocks the game. */
+  private consecutivePasses = 0;
 
   boardState: BoardState = {
     versionId: 0,
@@ -56,6 +59,10 @@ export class Room {
   private turnRemainingMs: number = 0;
   private turnTickInterval: NodeJS.Timeout | null = null;
 
+  private botTimer: NodeJS.Timeout | null = null;
+  /** Delay before a computer player acts, so humans can follow what it does. */
+  botThinkMs: [number, number] = [1200, 2600];
+
   private gracePeriodSecondsRemaining: number = 0;
   private gracePeriodTickInterval: NodeJS.Timeout | null = null;
 
@@ -74,12 +81,21 @@ export class Room {
     return this.status !== 'IN_GAME' && this.players.size < this.config.maxPlayers;
   }
 
+  get humanPlayers(): ServerPlayer[] {
+    return Array.from(this.players.values()).filter(p => !p.isBot);
+  }
+
+  /** A room with no human left is dead: computer players alone never keep it alive. */
   get isEmpty(): boolean {
-    return this.players.size === 0;
+    return this.humanPlayers.length === 0;
   }
 
   get allDisconnected(): boolean {
-    return Array.from(this.players.values()).every(p => !p.isConnected);
+    return this.humanPlayers.every(p => !p.isConnected);
+  }
+
+  get hasBots(): boolean {
+    return Array.from(this.players.values()).some(p => p.isBot);
   }
 
   get hostId(): string | null {
@@ -116,6 +132,31 @@ export class Room {
     return { player, sessionToken };
   }
 
+  /** Adds computer players (names are fixed, ids start with BOT_). */
+  addBots(count: number): void {
+    const names = ['Sami (ordi)', 'Yasmine (ordi)', 'Karim (ordi)'];
+    for (let i = 0; i < count && i < names.length; i++) {
+      const id = 'BOT_' + (i + 1);
+      this.players.set(id, {
+        id,
+        name: names[i],
+        sessionToken: crypto.randomUUID(),
+        isHost: false,
+        isBot: true,
+        isConnected: true,
+        rack: {
+          playerId: id,
+          playerName: names[i],
+          tiles: [],
+          hasMadeInitialMeld: false,
+          initialMeldScore: 0,
+          isConnected: true
+        },
+        lastHeartbeatTime: Date.now()
+      });
+    }
+  }
+
   /**
    * Socket lost (network cut, app killed). Idempotent: a second call for an already
    * disconnected player does nothing, so heartbeat supervision + socket close cannot
@@ -123,7 +164,7 @@ export class Room {
    */
   handleDisconnect(playerId: string): void {
     const player = this.players.get(playerId);
-    if (!player || !player.isConnected) return;
+    if (!player || player.isBot || !player.isConnected) return;
 
     player.isConnected = false;
     player.rack.isConnected = false;
@@ -235,7 +276,7 @@ export class Room {
 
     let newHostId: string | null = null;
     if (player.isHost) {
-      const next = this.players.values().next().value as ServerPlayer | undefined;
+      const next = this.humanPlayers[0];
       if (next) {
         next.isHost = true;
         newHostId = next.id;
@@ -321,6 +362,7 @@ export class Room {
     this.clearGraceTimers();
     this.status = 'IN_GAME';
     this.roundNumber++;
+    this.consecutivePasses = 0;
     this.deltaHistory = [];
     this.currentTurnNumber = 0;
     this.turnSnapshot = null;
@@ -388,6 +430,56 @@ export class Room {
     }
 
     this.resumeTurnTimer();
+    if (player.isBot) this.scheduleBotTurn(playerId);
+  }
+
+  // ==========================================
+  // COMPUTER PLAYERS
+  // ==========================================
+
+  private scheduleBotTurn(botId: string): void {
+    this.clearBotTimer();
+    const [min, max] = this.botThinkMs;
+    const delay = min + Math.random() * Math.max(0, max - min);
+    const turnAtSchedule = this.currentTurnNumber;
+    this.botTimer = setTimeout(() => {
+      this.botTimer = null;
+      if (this.status !== 'IN_GAME' || this.boardState.activePlayerId !== botId) return;
+      if (this.currentTurnNumber !== turnAtSchedule || this.boardState.isGracePeriod) return;
+      this.playBotTurn(botId);
+    }, delay);
+    this.botTimer.unref?.();
+  }
+
+  private clearBotTimer(): void {
+    if (this.botTimer) {
+      clearTimeout(this.botTimer);
+      this.botTimer = null;
+    }
+  }
+
+  private playBotTurn(botId: string): void {
+    const bot = this.players.get(botId);
+    const snapshot = this.turnSnapshot;
+    if (!bot || !snapshot) return;
+    const turn = this.currentTurnNumber;
+
+    let move = null;
+    try {
+      move = computeBotMove(bot.rack.tiles, this.boardState.melds, bot.rack.hasMadeInitialMeld, this.config);
+    } catch (err: any) {
+      console.error(`[Room ${this.roomCode}] Erreur IA ${botId}:`, err?.message);
+    }
+
+    if (move) {
+      this.handleEndTurn(botId, move.melds, move.remainingRackTileIds);
+      // The proposal was refused (should not happen): never leave the table waiting, draw instead.
+      if (this.status === 'IN_GAME' && this.currentTurnNumber === turn && this.boardState.activePlayerId === botId) {
+        this.handleDrawTile(botId);
+      }
+    } else {
+      this.handleDrawTile(botId);
+    }
   }
 
   private resumeTurnTimer(): void {
@@ -488,6 +580,7 @@ export class Room {
     }
 
     // Turn is Valid! Commit state
+    this.consecutivePasses = 0;
     this.boardState.versionId++;
     this.boardState.melds = proposedBoard.melds;
     this.recordDelta(this.boardState.melds);
@@ -593,6 +686,9 @@ export class Room {
       drawnTile = this.deck.shift()!;
       player.rack.tiles.push(drawnTile);
       this.boardState.drawPileCount = this.deck.length;
+      this.consecutivePasses = 0;
+    } else {
+      this.consecutivePasses++;
     }
 
     const nextPlayerId = this.advanceToNextPlayer();
@@ -616,6 +712,10 @@ export class Room {
       playerTilesCount: this.getPlayerTilesCount()
     });
 
+    if (this.isBlocked()) {
+      this.finishBlockedGame();
+      return;
+    }
     this.startPlayerTurn(nextPlayerId);
   }
 
@@ -649,6 +749,7 @@ export class Room {
     }
 
     player.rack.tiles.push(...penaltyTiles);
+    if (this.deck.length === 0 && penaltyTiles.length === 0) this.consecutivePasses++;
     this.boardState.versionId++;
 
     const nextPlayerId = this.advanceToNextPlayer();
@@ -675,7 +776,27 @@ export class Room {
       playerTilesCount: this.getPlayerTilesCount()
     });
 
+    if (this.isBlocked()) {
+      this.finishBlockedGame();
+      return;
+    }
     this.startPlayerTurn(nextPlayerId);
+  }
+
+  /** Draw pile empty and every player has passed in a row: nobody can progress. */
+  private isBlocked(): boolean {
+    return this.deck.length === 0 && this.turnOrder.length > 0 && this.consecutivePasses >= this.turnOrder.length;
+  }
+
+  /**
+   * Blocked game: the round ends and the player with the lowest rack total wins
+   * (Joker = 30 points, ties go to the fewest tiles).
+   */
+  private finishBlockedGame(): void {
+    const total = (p: ServerPlayer) => p.rack.tiles.reduce((s, t) => s + (t.isJoker ? 30 : t.number), 0);
+    const candidates = this.turnOrder.map(id => this.players.get(id)!).filter(Boolean);
+    candidates.sort((a, b) => total(a) - total(b) || a.rack.tiles.length - b.rack.tiles.length);
+    this.finishGame(candidates[0].id);
   }
 
   private finishGame(winnerId: string): void {
@@ -715,15 +836,18 @@ export class Room {
       });
       this.addToTotal(pid, -playerPenalty);
     }
-    this.addToTotal(winnerId, totalLoserPenaltySum);
+    // A blocked game can be won with tiles left: the winner then gives up his own remaining points.
+    const winnerOwn = winner.rack.tiles.reduce((acc, t) => acc + (t.isJoker ? 30 : t.number), 0);
+    const winnerDelta = totalLoserPenaltySum - winnerOwn;
+    this.addToTotal(winnerId, winnerDelta);
 
     // Le vainqueur marque la somme positive des pénalités adverses
     scores.push({
       playerId: winnerId,
       playerName: winner.name,
       isWinner: true,
-      remainingTileCount: 0,
-      scoreDelta: totalLoserPenaltySum,
+      remainingTileCount: winner.rack.tiles.length,
+      scoreDelta: winnerDelta,
       hadJokerPenalty: false
     });
 
@@ -864,6 +988,7 @@ export class Room {
   }
 
   private clearTurnTimers(): void {
+    this.clearBotTimer();
     if (this.turnTickInterval) {
       clearInterval(this.turnTickInterval);
       this.turnTickInterval = null;
@@ -909,6 +1034,7 @@ export class Room {
       name: p.name,
       isHost: p.isHost,
       isConnected: p.isConnected,
+      isBot: !!p.isBot,
       tileCount: p.rack.tiles.length,
       hasMadeInitialMeld: p.rack.hasMadeInitialMeld,
       totalScore: this.totalScores.get(p.id) ?? 0,

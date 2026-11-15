@@ -53,6 +53,10 @@ class MainActivity : ComponentActivity() {
 
     private val micPermissionGranted = mutableStateOf(false)
 
+    private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) audioBridge.library.add(uris)
+    }
+
     private val micPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         micPermissionGranted.value = granted
         audioBridge.onMicPermissionResult(granted)
@@ -95,6 +99,7 @@ class MainActivity : ComponentActivity() {
                 val voiceAvailable by micPermissionGranted
 
                 var currentScreen by remember { mutableStateOf(AppScreen.LOBBY) }
+                var showLobbyAudio by remember { mutableStateOf(false) }
                 var victoryScores by remember { mutableStateOf<List<PlayerEndScore>>(emptyList()) }
                 var winnerName by remember { mutableStateOf("") }
                 var isMeWinner by remember { mutableStateOf(false) }
@@ -109,7 +114,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         if (currentScreen == AppScreen.LOBBY) currentScreen = AppScreen.WAITING_ROOM
                         // Ask for the microphone once we are in a room (voice chat with friends)
-                        if (!micPermissionGranted.value) {
+                        if (!micPermissionGranted.value && networkRepository.gameConfig.value.botCount == 0) {
                             micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     }
@@ -205,7 +210,8 @@ class MainActivity : ComponentActivity() {
                                             networkRepository.joinRoom(code, playerName)
                                         }
                                     },
-                                    onCancelConnecting = { networkRepository.cancelConnecting() }
+                                    onCancelConnecting = { networkRepository.cancelConnecting() },
+                                    onOpenAudio = { showLobbyAudio = true }
                                 )
                             }
 
@@ -231,7 +237,9 @@ class MainActivity : ComponentActivity() {
                                     networkRepository = networkRepository,
                                     turnController = turnController,
                                     audioController = audioController,
-                                    voiceAvailable = voiceAvailable
+                                    audioBridge = audioBridge,
+                                    voiceAvailable = voiceAvailable,
+                                    onAddMusic = { pickMusic.launch(arrayOf("audio/*")) }
                                 )
                             }
 
@@ -250,6 +258,15 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                    }
+
+                    if (showLobbyAudio) {
+                        com.rummikub.app.ui.dialogs.AudioSettingsHost(
+                            audioBridge = audioBridge,
+                            gameConfig = gameConfig,
+                            onAddMusic = { pickMusic.launch(arrayOf("audio/*")) },
+                            onDismiss = { showLobbyAudio = false }
+                        )
                     }
 
                     SnackbarHost(

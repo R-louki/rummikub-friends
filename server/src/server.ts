@@ -83,6 +83,10 @@ function handlePacket(ws: WebSocket, packet: any): void {
         config: room.config,
         players: room.getPlayerSummaries()
       }));
+      // Against the computer there is nobody to wait for: deal the cards right away.
+      if (room.hasBots) {
+        setTimeout(() => { if (room.status === 'LOBBY') room.startGame(); }, 800).unref?.();
+      }
       break;
     }
 

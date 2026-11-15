@@ -31,6 +31,7 @@ enum class ValidationMode {
  * @param penaltyTilesCount Number of tiles drawn from the deck on invalid turn timeout (1 or 3).
  * @param maxPlayers Maximum players allowed in room (2 to 4).
  * @param gracePeriodSeconds Time allowed for a disconnected player to reconnect before auto-skipping (default 30s).
+ * @param botCount Computer players added to the table (0 = friends only, 1..3 = play against the computer).
  */
 @Serializable
 data class GameConfig(
@@ -41,7 +42,8 @@ data class GameConfig(
     val validationMode: ValidationMode = ValidationMode.STRICT_AUTOMATIC,
     val penaltyTilesCount: Int = 3,
     val maxPlayers: Int = 4,
-    val gracePeriodSeconds: Int = 30
+    val gracePeriodSeconds: Int = 30,
+    val botCount: Int = 0
 ) {
     init {
         require(turnDurationSeconds >= 0) { "turnDurationSeconds must be >= 0" }
@@ -49,6 +51,7 @@ data class GameConfig(
         require(penaltyTilesCount in 0..5) { "penaltyTilesCount must be between 0 and 5" }
         require(maxPlayers in 2..4) { "maxPlayers must be between 2 and 4" }
         require(gracePeriodSeconds >= 5) { "gracePeriodSeconds must be >= 5" }
+        require(botCount in 0..3) { "botCount must be between 0 and 3" }
     }
 
     companion object {
