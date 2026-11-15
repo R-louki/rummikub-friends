@@ -228,13 +228,16 @@ class GameNetworkRepository(
             proposedMelds = proposedMelds,
             remainingRackTileIds = remainingRackTileIds
         )
-        sendOrQueue(packet)
+        sendOrQueue(packet, notifyIfOffline = true)
     }
 
     suspend fun drawTile() {
-        val myId = _myPlayerId.value ?: return
+        val myId = _myPlayerId.value ?: run {
+            _errors.emit("Vous n'êtes pas encore dans une partie.")
+            return
+        }
         val packet = NetworkPacket.DrawTileRequest(playerId = myId)
-        sendOrQueue(packet)
+        sendOrQueue(packet, notifyIfOffline = true)
     }
 
     suspend fun sendVoiceSignal(signal: NetworkPacket.VoiceSignalPacket) {
@@ -245,7 +248,12 @@ class GameNetworkRepository(
         }
     }
 
-    private suspend fun sendOrQueue(packet: NetworkPacket) {
+    private suspend fun sendOrQueue(packet: NetworkPacket, notifyIfOffline: Boolean = false) {
+        if (!webSocketClient.isConnected && notifyIfOffline) {
+            _errors.emit("Connexion perdue : votre action sera envoyée dès la reconnexion.")
+            // The socket is gone but nobody noticed yet: start recovering right away.
+            handleConnectionLost("Action sans connexion")
+        }
         if (webSocketClient.isConnected) {
             try {
                 webSocketClient.send(packet)
@@ -385,7 +393,6 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.RoomJoinedResponse -> {
-                _roomCode.value = packet.roomCode
                 _myPlayerId.value = packet.playerId
                 _sessionToken.value = packet.sessionToken
                 _isHost.value = packet.isHost
@@ -393,6 +400,7 @@ class GameNetworkRepository(
                 _players.value = packet.players
                 _playerRack.value = PlayerRack(playerId = packet.playerId)
                 _boardState.value = BoardState()
+                _roomCode.value = packet.roomCode // last: observers see a complete state
             }
 
             is NetworkPacket.PlayerJoinedEvent -> {

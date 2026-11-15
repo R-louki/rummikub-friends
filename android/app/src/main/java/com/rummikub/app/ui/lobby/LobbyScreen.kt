@@ -34,7 +34,8 @@ fun LobbyScreen(
     onCreateRoom: (hostName: String, config: GameConfig) -> Unit,
     onJoinRoom: (roomCode: String, playerName: String) -> Unit,
     onCancelConnecting: () -> Unit,
-    onOpenAudio: () -> Unit = {}
+    onOpenAudio: () -> Unit = {},
+    startingMessage: String? = null
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
@@ -153,6 +154,21 @@ fun LobbyScreen(
                     onJoinRoom(code, name)
                 }
             )
+        }
+
+        // "Preparing the game" overlay (computer table: no waiting room)
+        if (startingMessage != null && connectionStatus !is ConnectionStatus.Connecting) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xAA000000)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(color = Color(0xFFFFD54F), strokeWidth = 3.dp)
+                    Text(startingMessage, fontSize = 13.sp, color = Color.White, textAlign = TextAlign.Center)
+                }
+            }
         }
 
         // Connecting overlay

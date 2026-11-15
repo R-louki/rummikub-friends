@@ -112,7 +112,9 @@ class MainActivity : ComponentActivity() {
                     if (roomCode == null) {
                         if (currentScreen != AppScreen.LOBBY) currentScreen = AppScreen.LOBBY
                     } else {
-                        if (currentScreen == AppScreen.LOBBY) currentScreen = AppScreen.WAITING_ROOM
+                        // Against the computer the table starts by itself: skip the waiting room.
+                        val vsComputer = networkRepository.gameConfig.value.botCount > 0
+                        if (currentScreen == AppScreen.LOBBY && !vsComputer) currentScreen = AppScreen.WAITING_ROOM
                         // Ask for the microphone once we are in a room (voice chat with friends)
                         if (!micPermissionGranted.value && networkRepository.gameConfig.value.botCount == 0) {
                             micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
@@ -211,6 +213,8 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     onCancelConnecting = { networkRepository.cancelConnecting() },
+                                    startingMessage = if (roomCode != null && gameConfig.botCount > 0)
+                                        "Préparation de la partie contre l'ordinateur..." else null,
                                     onOpenAudio = { showLobbyAudio = true }
                                 )
                             }
@@ -250,7 +254,12 @@ class MainActivity : ComponentActivity() {
                                     isMeWinner = isMeWinner,
                                     roundNumber = roundNumber,
                                     onPlayAgain = {
-                                        currentScreen = AppScreen.WAITING_ROOM
+                                        if (gameConfig.botCount > 0) {
+                                            // Computer table: deal again right away, no waiting room
+                                            lifecycleScope.launch { networkRepository.startGame() }
+                                        } else {
+                                            currentScreen = AppScreen.WAITING_ROOM
+                                        }
                                     },
                                     onBackToLobby = {
                                         lifecycleScope.launch { networkRepository.leaveRoom() }

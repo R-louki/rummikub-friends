@@ -81,8 +81,13 @@ class RummikubWebSocketClient(
      */
     suspend fun connect(serverUrl: String, handshakeTimeoutMs: Long = 30_000L) {
         disconnect()
-        val webSocketSession = withTimeout(handshakeTimeoutMs) {
-            httpClient.webSocketSession(serverUrl)
+        val webSocketSession = try {
+            withTimeout(handshakeTimeoutMs) {
+                httpClient.webSocketSession(serverUrl)
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            // withTimeout signals a CancellationException: turn it into a plain failure so callers retry
+            throw java.io.IOException("Délai de connexion dépassé")
         }
         session = webSocketSession
 

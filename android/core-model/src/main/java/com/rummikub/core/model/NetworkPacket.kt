@@ -290,6 +290,7 @@ data class PlayerSummary(
     val name: String,
     val isHost: Boolean,
     val isConnected: Boolean,
+    val isBot: Boolean = false,
     val tileCount: Int,
     val hasMadeInitialMeld: Boolean,
     val totalScore: Int = 0,

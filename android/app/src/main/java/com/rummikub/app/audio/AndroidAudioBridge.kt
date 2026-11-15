@@ -79,7 +79,7 @@ class AndroidAudioBridge(
         }
         scope.launch {
             combine(repository.players, repository.myPlayerId) { players, me ->
-                players.map { it.id }.filter { it != me }
+                players.filter { !it.isBot }.map { it.id }.filter { it != me }
             }.collect { others ->
                 if (voice.isRunning) voice.syncPeers(others)
             }
@@ -123,6 +123,7 @@ class AndroidAudioBridge(
 
     private fun maybeStartVoice() {
         if (!micPermissionGranted) return
+        if (repository.gameConfig.value.botCount > 0) return
         val id = repository.myPlayerId.value ?: return
         if (voice.isRunning || voiceStarting) return
         voiceStarting = true
@@ -137,7 +138,7 @@ class AndroidAudioBridge(
                     builder.createIceServer()
                 }
                 voice.start(id, servers)
-                voice.syncPeers(repository.players.value.map { it.id })
+                voice.syncPeers(repository.players.value.filter { !it.isBot }.map { it.id })
             } catch (e: Exception) {
                 System.err.println("[AndroidAudioBridge] Voice start failed: ${e.message}")
             } finally {
