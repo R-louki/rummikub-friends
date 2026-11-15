@@ -58,7 +58,8 @@ fun GameScreen(
     audioController: AudioController,
     audioBridge: AndroidAudioBridge,
     voiceAvailable: Boolean,
-    onAddMusic: () -> Unit
+    onAddMusic: () -> Unit,
+    onOpenTheme: () -> Unit = {}
 ) {
     val view = LocalView.current
 
@@ -74,6 +75,7 @@ fun GameScreen(
     val lastMove by networkRepository.lastMove.collectAsState()
     val liveMelds by networkRepository.liveMelds.collectAsState()
     val actionInFlight by networkRepository.actionInFlight.collectAsState()
+    val drawnTileId by networkRepository.lastDrawnTileId.collectAsState()
 
     // Working (local, in-progress) state of the turn
     val workingBoard by turnController.board.collectAsState()
@@ -255,6 +257,7 @@ fun GameScreen(
                     rack = workingRack,
                     layoutEpoch = rackEpoch,
                     collapsed = rackCollapsed,
+                    drawnTileId = drawnTileId,
                     onToggleCollapsed = { rackCollapsed = !rackCollapsed },
                     onSortRuns = {
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -385,6 +388,10 @@ fun GameScreen(
                         DropdownMenuItem(
                             text = { com.rummikub.app.ui.components.NetworkIndicator(connectionStatus, latencyMs) },
                             onClick = { menuOpen = false }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("🎨 Thème") },
+                            onClick = { menuOpen = false; onOpenTheme() }
                         )
                         DropdownMenuItem(
                             text = { Text("🎵 Musique et audio") },

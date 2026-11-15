@@ -1,6 +1,9 @@
 package com.rummikub.app.ui.board
 
 import androidx.compose.foundation.background
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -263,7 +266,7 @@ fun MeldGroupContainer(
                         isPlacedByOpponent = tile.id in placedByOthers,
                         isMovedByOpponent = tile.id in movedByOthers,
                         isGhost = hovered,
-                        modifier = Modifier.tileDragSource(
+                        modifier = Modifier.popIn().tileDragSource(
                             tileId = tile.id,
                             enabled = isMyTurn,
                             onTap = tapAction
@@ -282,6 +285,24 @@ fun MeldGroupContainer(
             onDropTile = { id -> onTileDropped(id, DropTarget.MeldPosition(meld.id, Int.MAX_VALUE)) },
             onTap = { onTargetTapped(DropTarget.MeldPosition(meld.id, Int.MAX_VALUE)) }
         )
+    }
+}
+
+/** A tile that appears on the table (yours, or an opponent's move in real time) pops in with a spring. */
+@Composable
+private fun Modifier.popIn(): Modifier {
+    val scale = remember { androidx.compose.animation.core.Animatable(0.5f) }
+    val flip = remember { androidx.compose.animation.core.Animatable(70f) }
+    LaunchedEffect(Unit) {
+        launch { flip.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 220f)) }
+        scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 380f))
+    }
+    return this.graphicsLayer {
+        scaleX = scale.value
+        scaleY = scale.value
+        rotationY = flip.value            // 3D flip towards the player
+        cameraDistance = 14f * density
+        alpha = (0.35f + 0.65f * scale.value).coerceAtMost(1f)
     }
 }
 

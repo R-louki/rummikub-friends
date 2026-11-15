@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rummikub.app.ui.theme.FeltDarkGreen
+import com.rummikub.app.ui.theme.FeltMediumGreen
 import com.rummikub.app.ui.theme.WoodBorder
 import com.rummikub.app.ui.theme.WoodDarkBrown
 import com.rummikub.core.model.GameConfig
@@ -31,6 +32,7 @@ import com.rummikub.core.network.ConnectionStatus
 @Composable
 fun LobbyScreen(
     connectionStatus: ConnectionStatus,
+    onOpenTheme: () -> Unit = {},
     onCreateRoom: (hostName: String, config: GameConfig) -> Unit,
     onJoinRoom: (roomCode: String, playerName: String) -> Unit,
     onCancelConnecting: () -> Unit,
@@ -55,7 +57,7 @@ fun LobbyScreen(
             .fillMaxSize()
             .background(
                 Brush.radialGradient(
-                    colors = listOf(Color(0xFF134226), FeltDarkGreen, Color(0xFF06140B))
+                    colors = listOf(FeltMediumGreen, FeltDarkGreen, com.rummikub.app.ui.theme.ThemeState.current.deepest)
                 )
             ),
         contentAlignment = Alignment.Center
@@ -171,6 +173,9 @@ fun LobbyScreen(
         ) {
             if (connectionStatus !is ConnectionStatus.Disconnected || accountPseudo != null) {
                 com.rummikub.app.ui.components.NetworkIndicator(connectionStatus, latencyMs)
+            }
+            TextButton(onClick = onOpenTheme) {
+                Text("🎨 Thème", color = Color(0xFFFFD54F), fontSize = 12.sp)
             }
             TextButton(onClick = onOpenAudio) {
                 Text("🎵 Musique & audio", color = Color(0xFFFFD54F), fontSize = 12.sp)

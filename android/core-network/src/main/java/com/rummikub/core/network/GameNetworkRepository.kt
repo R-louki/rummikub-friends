@@ -78,6 +78,10 @@ class GameNetworkRepository(
     private val _liveMelds = MutableStateFlow<List<MeldSet>?>(null)
     val liveMelds: StateFlow<List<MeldSet>?> = _liveMelds.asStateFlow()
 
+    /** The tile I just drew (highlighted in the rack for a few seconds). */
+    private val _lastDrawnTileId = MutableStateFlow<String?>(null)
+    val lastDrawnTileId: StateFlow<String?> = _lastDrawnTileId.asStateFlow()
+
     private val _lastMove = MutableStateFlow<LastMove?>(null)
     /** The last move of an opponent (null after my own action or a new game). */
     val lastMove: StateFlow<LastMove?> = _lastMove.asStateFlow()
@@ -703,6 +707,11 @@ class GameNetworkRepository(
                 val drawn = packet.drawnTile
                 if (drawn != null && packet.playerId == _myPlayerId.value) {
                     _playerRack.value = _playerRack.value.withTileAdded(drawn)
+                    _lastDrawnTileId.value = drawn.id
+                    scope.launch {
+                        delay(3500L)
+                        if (_lastDrawnTileId.value == drawn.id) _lastDrawnTileId.value = null
+                    }
                 }
                 updateTileCounts(packet.playerTilesCount)
             }

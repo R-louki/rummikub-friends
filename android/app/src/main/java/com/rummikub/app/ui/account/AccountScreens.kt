@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.rummikub.app.account.PseudoCheck
 import com.rummikub.app.ui.theme.FeltDarkGreen
+import com.rummikub.app.ui.theme.FeltMediumGreen
 import com.rummikub.app.ui.theme.WoodBorder
 import com.rummikub.app.ui.theme.WoodDarkBrown
 import com.rummikub.core.network.Friend
@@ -48,7 +49,7 @@ fun LoginScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.radialGradient(listOf(Color(0xFF134226), FeltDarkGreen, Color(0xFF06140B)))),
+            .background(Brush.radialGradient(listOf(FeltMediumGreen, FeltDarkGreen, com.rummikub.app.ui.theme.ThemeState.current.deepest))),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -135,7 +136,7 @@ fun PseudoScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.radialGradient(listOf(Color(0xFF134226), FeltDarkGreen, Color(0xFF06140B)))),
+            .background(Brush.radialGradient(listOf(FeltMediumGreen, FeltDarkGreen, com.rummikub.app.ui.theme.ThemeState.current.deepest))),
         contentAlignment = Alignment.Center
     ) {
         Card(

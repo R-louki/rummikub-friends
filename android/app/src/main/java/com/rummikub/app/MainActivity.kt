@@ -128,6 +128,7 @@ class MainActivity : ComponentActivity() {
         // No ambient music by default: the player picks a track in "Musique & audio".
         // The volume is preset so the chosen track is audible but soft.
         audioController.setMusicVolume(0.30f)
+        com.rummikub.app.ui.theme.ThemeState.select(getSharedPreferences("settings", MODE_PRIVATE).getInt("theme", 0))
 
         val alreadyGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         micPermissionGranted.value = alreadyGranted
@@ -169,6 +170,7 @@ class MainActivity : ComponentActivity() {
 
                 var currentScreen by remember { mutableStateOf(AppScreen.LOBBY) }
                 var showLobbyAudio by remember { mutableStateOf(false) }
+                var showTheme by remember { mutableStateOf(false) }
                 var victoryScores by remember { mutableStateOf<List<PlayerEndScore>>(emptyList()) }
                 var winnerName by remember { mutableStateOf("") }
                 var isMeWinner by remember { mutableStateOf(false) }
@@ -393,6 +395,7 @@ class MainActivity : ComponentActivity() {
                                     startingMessage = busyMessage ?: if (roomCode != null && gameConfig.botCount > 0)
                                         "Préparation de la partie contre l'ordinateur..." else null,
                                     onOpenAudio = { showLobbyAudio = true },
+                                    onOpenTheme = { showTheme = true },
                                     accountPseudo = (a as? AuthState.SignedIn)?.pseudo,
                                     accountAvatar = (a as? AuthState.SignedIn)?.avatar,
                                     onEditAvatar = { showAvatarPicker = true },
@@ -438,7 +441,8 @@ class MainActivity : ComponentActivity() {
                                     audioController = audioController,
                                     audioBridge = audioBridge,
                                     voiceAvailable = voiceAvailable,
-                                    onAddMusic = { pickMusic.launch(arrayOf("audio/*")) }
+                                    onAddMusic = { pickMusic.launch(arrayOf("audio/*")) },
+                                    onOpenTheme = { showTheme = true }
                                 )
                             }
 
@@ -557,6 +561,16 @@ class MainActivity : ComponentActivity() {
                                 lifecycleScope.launch { networkRepository.joinRoom(invite.roomCode, accounts.myPseudo ?: "Ami") }
                             },
                             onDecline = { pendingInvite = null }
+                        )
+                    }
+
+                    if (showTheme) {
+                        com.rummikub.app.ui.dialogs.ThemePickerDialog(
+                            onPick = { i ->
+                                com.rummikub.app.ui.theme.ThemeState.select(i)
+                                getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("theme", i).apply()
+                            },
+                            onDismiss = { showTheme = false }
                         )
                     }
 

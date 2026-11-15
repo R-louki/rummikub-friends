@@ -1,5 +1,14 @@
 package com.rummikub.app.ui.rack
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,6 +55,7 @@ fun PlayerRackView(
     rack: PlayerRack,
     layoutEpoch: Int,
     collapsed: Boolean,
+    drawnTileId: String? = null,
     onToggleCollapsed: () -> Unit,
     onSortRuns: () -> Unit,
     onSortGroups: () -> Unit,
@@ -157,7 +167,7 @@ fun PlayerRackView(
                     ) {
                         ordered.forEach { tile ->
                             key(tile.id) {
-                                RackTile(tile, tileW, tileH, tile.id in selectedTileIds, isMyTurn, onTileTapped)
+                                RackTile(tile, tileW, tileH, tile.id in selectedTileIds, isMyTurn, onTileTapped, tile.id == drawnTileId)
                             }
                         }
                     }
@@ -186,6 +196,7 @@ fun PlayerRackView(
                                         tileW = tileW,
                                         tileH = tileH,
                                         isMyTurn = isMyTurn,
+                                        drawn = tile != null && tile.id == drawnTileId,
                                         selected = tile != null && tile.id in selectedTileIds,
                                         onTileTapped = onTileTapped,
                                         onDrop = { id -> dropOnSlot(id, slot) },
@@ -225,7 +236,8 @@ private fun RackTool(glyph: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RackTile(tile: Tile, w: Dp, h: Dp, selected: Boolean, isMyTurn: Boolean, onTileTapped: (Tile) -> Unit) {
+private fun RackTile(tile: Tile, w: Dp, h: Dp, selected: Boolean, isMyTurn: Boolean, onTileTapped: (Tile) -> Unit, drawn: Boolean = false) {
+    Box(modifier = if (drawn) Modifier.drawnEffect() else Modifier) {
     TileView(
         tile = tile,
         width = w,
@@ -238,6 +250,31 @@ private fun RackTile(tile: Tile, w: Dp, h: Dp, selected: Boolean, isMyTurn: Bool
             onTap = { if (isMyTurn) onTileTapped(tile) }
         )
     )
+    }
+}
+
+/** The tile just drawn: it flies in (springy zoom) and pulses with a golden ring for a few seconds. */
+@Composable
+private fun Modifier.drawnEffect(): Modifier {
+    val zoom = remember { Animatable(1.8f) }
+    val flip = remember { Animatable(180f) }
+    LaunchedEffect(Unit) {
+        launch { flip.animateTo(0f, tween(650)) }
+        zoom.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 260f))
+    }
+    val pulse = rememberInfiniteTransition(label = "drawn")
+    val alpha by pulse.animateFloat(
+        initialValue = 0.25f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(450), RepeatMode.Reverse), label = "drawnAlpha"
+    )
+    return this
+        .graphicsLayer {
+            scaleX = zoom.value
+            scaleY = zoom.value
+            rotationY = flip.value          // the tile turns over in 3D as it arrives
+            cameraDistance = 12f * density
+        }
+        .border(3.dp, Color(0xFFFFD54F).copy(alpha = alpha), RoundedCornerShape(8.dp))
 }
 
 @Composable
@@ -246,6 +283,7 @@ private fun RackSlot(
     tileW: Dp,
     tileH: Dp,
     isMyTurn: Boolean,
+    drawn: Boolean = false,
     selected: Boolean,
     onTileTapped: (Tile) -> Unit,
     onDrop: (String) -> Unit,
@@ -264,7 +302,7 @@ private fun RackSlot(
                 .background(if (hovered) Color(0x5500E5FF) else Color.Transparent)
         ) {
             if (tile != null) {
-                key(tile.id) { RackTile(tile, tileW, tileH, selected, isMyTurn, onTileTapped) }
+                key(tile.id) { RackTile(tile, tileW, tileH, selected, isMyTurn, onTileTapped, drawn) }
             }
         }
     }
