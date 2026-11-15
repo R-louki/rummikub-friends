@@ -56,6 +56,7 @@ fun PlayerRackView(
     layoutEpoch: Int,
     collapsed: Boolean,
     drawnTileId: String? = null,
+    sortMode: Int = 0,
     onToggleCollapsed: () -> Unit,
     onSortRuns: () -> Unit,
     onSortGroups: () -> Unit,
@@ -69,7 +70,10 @@ fun PlayerRackView(
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val usableWidth = maxWidth - 16.dp - ToolsWidth
         val bigColumns = (usableWidth / (BigW + 3.dp)).toInt().coerceAtLeast(8)
-        val single = rack.tiles.size <= bigColumns
+        val needed = if (sortMode != 0) {
+            (sortedLayout(rack.tiles, sortMode).maxOfOrNull { it.second } ?: -1) + 1
+        } else rack.tiles.size
+        val single = needed <= bigColumns
         val rows = if (single) 1 else 2
         val tileW = if (single) BigW else SmallW
         val tileH = if (single) BigH else SmallH
@@ -87,7 +91,7 @@ fun PlayerRackView(
 
         // tile id -> slot index. Reset when the rack is re-sorted.
         val slots: SnapshotStateMap<String, Int> = remember(layoutEpoch) { mutableStateMapOf() }
-        val placement = resolvePlacement(rack.tiles, slots, columns, rows)
+        val placement = resolvePlacement(rack.tiles, slots, columns, rows, sortMode)
         SideEffect {
             placement.forEach { (id, slot) -> if (slots[id] != slot) slots[id] = slot }
         }
@@ -315,7 +319,53 @@ private fun RackSlot(
  * first free one. With no remembered slots at all, one row is filled left to right and two rows are
  * split evenly.
  */
-private fun resolvePlacement(tiles: List<Tile>, remembered: Map<String, Int>, columns: Int, rows: Int): Map<String, Int> {
+/**
+ * After "789" (runs) tiles are ordered by colour then number, after "999" (groups) by number then
+ * colour. A space is left around every real combination (3 or more tiles in a row of the same colour,
+ * or of the same number) and between colours; loose tiles stay close together.
+ * Returns each tile with its position on one virtual line (gaps included).
+ */
+private fun sortedLayout(tiles: List<Tile>, mode: Int): List<Pair<Tile, Int>> {
+    val ordered = if (mode == 1) {
+        tiles.sortedWith(compareBy<Tile> { it.isJoker }.thenBy { it.color?.ordinal ?: 99 }.thenBy { it.number })
+    } else {
+        tiles.sortedWith(compareBy<Tile> { it.isJoker }.thenBy { it.number }.thenBy { it.color?.ordinal ?: 99 })
+    }
+    // Segment = tiles that follow each other as one potential combination
+    fun follows(p: Tile, t: Tile): Boolean = when {
+        p.isJoker || t.isJoker -> p.isJoker && t.isJoker
+        mode == 1 -> p.color == t.color && t.number - p.number == 1
+        else -> p.number == t.number
+    }
+    val segment = IntArray(ordered.size)
+    for (i in 1 until ordered.size) segment[i] = if (follows(ordered[i - 1], ordered[i])) segment[i - 1] else segment[i - 1] + 1
+    val size = HashMap<Int, Int>()
+    segment.forEach { size[it] = (size[it] ?: 0) + 1 }
+
+    val out = ArrayList<Pair<Tile, Int>>()
+    var pos = 0
+    for (i in ordered.indices) {
+        if (i > 0) {
+            val p = ordered[i - 1]
+            val t = ordered[i]
+            val boundary = segment[i] != segment[i - 1]
+            val combo = (size[segment[i - 1]] ?: 0) >= 3 || (size[segment[i]] ?: 0) >= 3
+            val gap = when {
+                p.isJoker != t.isJoker -> true
+                !boundary -> false
+                combo -> true
+                mode == 1 -> p.color != t.color
+                else -> false
+            }
+            if (gap) pos++
+        }
+        out += ordered[i] to pos
+        pos++
+    }
+    return out
+}
+
+private fun resolvePlacement(tiles: List<Tile>, remembered: Map<String, Int>, columns: Int, rows: Int, sortMode: Int): Map<String, Int> {
     val all = (0 until rows).flatMap { r -> (0 until columns).map { c -> r * ROW_STRIDE + c } }
     val valid = all.toHashSet()
     val result = LinkedHashMap<String, Int>()
@@ -323,9 +373,16 @@ private fun resolvePlacement(tiles: List<Tile>, remembered: Map<String, Int>, co
     val fresh = tiles.none { remembered.containsKey(it.id) }
     val half = (tiles.size + 1) / 2
 
+    val sortedPos = if (sortMode != 0) sortedLayout(tiles, sortMode).associate { it.first.id to it.second } else emptyMap()
+
     tiles.forEachIndexed { i, tile ->
         val preferred = if (fresh) {
-            if (rows == 1 || i < half) i else ROW_STRIDE + (i - half)
+            val sp = sortedPos[tile.id]
+            when {
+                sp != null -> if (sp < columns) sp else if (rows > 1) ROW_STRIDE + (sp - columns) else null
+                rows == 1 || i < half -> i
+                else -> ROW_STRIDE + (i - half)
+            }
         } else remembered[tile.id]
         val slot = if (preferred != null && preferred in valid && used.add(preferred)) preferred
         else all.first { it !in used }.also { used.add(it) }

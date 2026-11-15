@@ -61,6 +61,9 @@ class TurnController(
     val rack: StateFlow<PlayerRack> = _rack.asStateFlow()
 
     /** Bumped when the rack is re-sorted so the UI re-lays the tiles out (free placement is UI-only). */
+    private val _rackSortMode = MutableStateFlow(0) // 0 none, 1 runs (by colour), 2 groups (by number)
+    val rackSortMode: StateFlow<Int> = _rackSortMode.asStateFlow()
+
     private val _rackEpoch = MutableStateFlow(0)
     val rackEpoch: StateFlow<Int> = _rackEpoch.asStateFlow()
 
@@ -455,12 +458,14 @@ class TurnController(
     fun sortByRun() {
         _rack.value = _rack.value.sortedByRun()
         snapshotRack = snapshotRack.sortedByRun()
+        _rackSortMode.value = 1
         _rackEpoch.value += 1
     }
 
     fun sortByGroup() {
         _rack.value = _rack.value.sortedByGroup()
         snapshotRack = snapshotRack.sortedByGroup()
+        _rackSortMode.value = 2
         _rackEpoch.value += 1
     }
 

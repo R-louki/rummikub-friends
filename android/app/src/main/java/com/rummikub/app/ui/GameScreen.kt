@@ -98,6 +98,7 @@ fun GameScreen(
     val workingBoard by turnController.board.collectAsState()
     val workingRack by turnController.rack.collectAsState()
     val rackEpoch by turnController.rackEpoch.collectAsState()
+    val rackSortMode by turnController.rackSortMode.collectAsState()
     var rackCollapsed by remember { mutableStateOf(false) }
     val selectedList by turnController.selectedTileIds.collectAsState()
     val selectedTileIds = remember(selectedList) { selectedList.toSet() }
@@ -280,6 +281,7 @@ fun GameScreen(
                     layoutEpoch = rackEpoch,
                     collapsed = rackCollapsed,
                     drawnTileId = drawnTileId,
+                    sortMode = rackSortMode,
                     onToggleCollapsed = { rackCollapsed = !rackCollapsed },
                     onSortRuns = {
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
