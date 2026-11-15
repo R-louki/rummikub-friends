@@ -16,6 +16,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -154,141 +159,95 @@ fun GameScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(FeltDarkGreen)
+            .background(Brush.radialGradient(listOf(FeltLight, FeltMediumGreen, FeltDarkGreen)))
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
             // ==========================================
-            // LEFT RIBBON: timer, players, connection, settings
+            // LEFT: players only (avatar, turn-timer ring, tile count)
             // ==========================================
             Column(
                 modifier = Modifier
-                    .width(70.dp)
+                    .width(66.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFF07170D))
-                    .padding(horizontal = 3.dp, vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 3.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                SynchronizedTimerView(
-                    remainingMillis = remainingMillis,
-                    totalDurationSeconds = gameConfig.turnDurationSeconds,
-                    isGracePeriod = isGracePeriod,
-                    gracePeriodCountdownSeconds = graceSeconds,
-                    compact = true
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    players.forEach { player ->
-                        RibbonPlayer(
-                            player = player,
-                            isMe = player.id == myPlayerId,
-                            isActiveTurn = serverBoard.activePlayerId == player.id,
-                            isSpeaking = speakingPlayers.contains(player.id) || (player.id == myPlayerId && isLocalSpeaking),
-                            isMutedByMe = mutedPlayers.contains(player.id),
-                            onToggleMute = { if (player.id != myPlayerId) audioController.togglePlayerMute(player.id) }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // Connection quality, draw pile, room code
-                com.rummikub.app.ui.components.NetworkIndicator(connectionStatus, latencyMs)
-                Text("Pioche ${serverBoard.drawPileCount}", color = Color(0xBBFFFFFF), fontSize = 9.sp)
-                Text(
-                    text = roomCode ?: "----",
-                    color = Color(0xFFFFD54F),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.sp
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                IconButton(
-                    onClick = { showSettingsDialog = true },
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF26140B))
-                ) {
-                    Text("⚙️", fontSize = 15.sp)
+                val totalMs = gameConfig.turnDurationSeconds * 1000f
+                players.forEach { player ->
+                    val active = serverBoard.activePlayerId == player.id
+                    RibbonPlayer(
+                        player = player,
+                        isMe = player.id == myPlayerId,
+                        isActiveTurn = active,
+                        isSpeaking = speakingPlayers.contains(player.id) || (player.id == myPlayerId && isLocalSpeaking),
+                        isMutedByMe = mutedPlayers.contains(player.id),
+                        timerFraction = if (active && !isGracePeriod && totalMs > 0f) (remainingMillis / totalMs).coerceIn(0f, 1f) else null,
+                        secondsLeft = if (active && !isGracePeriod && totalMs > 0f) ((remainingMillis + 999) / 1000).toInt() else null,
+                        onToggleMute = { if (player.id != myPlayerId) audioController.togglePlayerMute(player.id) }
+                    )
                 }
             }
 
             // ==========================================
-            // CENTRE: status line, table, rack
+            // CENTRE: the table (as large as possible) and the rack
             // ==========================================
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .padding(horizontal = 2.dp, vertical = 2.dp)
             ) {
-                // One compact line: my status on the left, what the opponent just did on the right
-                // (orange = laid down from the rack, violet = moved on the table)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = statusText,
-                        color = statusColor,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = lastMove == null)
+                // While another player is arranging the table, show their moves live
+                val shownBoard = if (!isMyTurn && liveMelds != null) workingBoard.copy(melds = liveMelds!!) else workingBoard
+                // A hint only when it helps (no permanent status bar)
+                val hint: String? = when {
+                    isGracePeriod -> statusText + (graceSeconds?.let { " ($it s)" } ?: "")
+                    !isMyTurn -> listOfNotNull(statusText, lastMove?.description).joinToString(" · ")
+                    summary.invalidMeldCount > 0 ||
+                        (!hasMadeInitialMeld && gameConfig.initialMeldThreshold > 0) ||
+                        selectedTileIds.isNotEmpty() -> statusText
+                    else -> null
+                }
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    BoardGrid(
+                        boardState = shownBoard,
+                        isMyTurn = isMyTurn,
+                        newTileIds = newTileIds,
+                        selectedTileIds = selectedTileIds,
+                        placedByOthers = lastMove?.placed ?: emptySet(),
+                        movedByOthers = lastMove?.moved ?: emptySet(),
+                        initialMeldThreshold = if (hasMadeInitialMeld) 0 else gameConfig.initialMeldThreshold,
+                        onTileTapped = { tile -> turnController.toggleSelection(tile.id) },
+                        onTileDropped = { tileId, target ->
+                            turnController.dropTile(tileId, target)
+                            audioController.onTileSnapped()
+                        },
+                        onTargetTapped = { target ->
+                            if (turnController.sendSelectedTo(target)) {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                audioController.onTileSnapped()
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
                     )
-                    lastMove?.let { move ->
+                    if (hint != null) {
                         Text(
-                            text = move.description +
-                                (if (move.placed.isNotEmpty()) "  ■ posées" else "") +
-                                (if (move.moved.isNotEmpty()) "  ■ déplacées" else ""),
-                            color = Color(0xFFFFB74D),
+                            text = hint,
+                            color = statusColor,
                             fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 6.dp, start = 12.dp, end = 12.dp)
+                                .background(Color(0x99000000), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 10.dp, vertical = 3.dp)
                         )
                     }
                 }
-
-                // While another player is arranging the table, show their moves live
-                val shownBoard = if (!isMyTurn && liveMelds != null) workingBoard.copy(melds = liveMelds!!) else workingBoard
-                BoardGrid(
-                    boardState = shownBoard,
-                    isMyTurn = isMyTurn,
-                    newTileIds = newTileIds,
-                    selectedTileIds = selectedTileIds,
-                    placedByOthers = lastMove?.placed ?: emptySet(),
-                    movedByOthers = lastMove?.moved ?: emptySet(),
-                    initialMeldThreshold = if (hasMadeInitialMeld) 0 else gameConfig.initialMeldThreshold,
-                    onTileTapped = { tile -> turnController.toggleSelection(tile.id) },
-                    onTileDropped = { tileId, target ->
-                        turnController.dropTile(tileId, target)
-                        audioController.onTileSnapped()
-                    },
-                    onTargetTapped = { target ->
-                        if (turnController.sendSelectedTo(target)) {
-                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                            audioController.onTileSnapped()
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                )
 
                 Spacer(modifier = Modifier.height(2.dp))
 
@@ -297,6 +256,16 @@ fun GameScreen(
                     layoutEpoch = rackEpoch,
                     collapsed = rackCollapsed,
                     onToggleCollapsed = { rackCollapsed = !rackCollapsed },
+                    onSortRuns = {
+                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
+                        turnController.sortByRun()
+                    },
+                    onSortGroups = {
+                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
+                        turnController.sortByGroup()
+                    },
                     isMyTurn = isMyTurn,
                     selectedTileIds = selectedTileIds,
                     onTileTapped = { tile ->
@@ -306,42 +275,48 @@ fun GameScreen(
                     onTileDroppedOnRack = { tileId -> turnController.dropTile(tileId, DropTarget.Rack) },
                     onRackTapped = {
                         if (turnController.sendSelectedTo(DropTarget.Rack)) audioController.onTileSnapped()
-                    },
-                    modifier = Modifier.height(if (rackCollapsed) 56.dp else 92.dp)
+                    }
                 )
             }
 
             // ==========================================
-            // RIGHT RIBBON: actions
+            // RIGHT: validate, draw (with the pile count), undo, microphone, menu
             // ==========================================
             Column(
                 modifier = Modifier
-                    .width(54.dp)
+                    .width(58.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFF1B0E09))
-                    .padding(horizontal = 3.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                    .padding(horizontal = 3.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 RoundAction(
                     glyph = if (actionInFlight) "⏳" else "✓",
                     enabled = isMyTurn && !actionInFlight,
                     container = Color(0xFF2E7D32),
-                    size = 48.dp,
-                    glyphSize = 24.sp
+                    size = 52.dp,
+                    glyphSize = 26.sp
                 ) {
                     view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                     if (turnController.commitTurn()) audioController.onTurnSuccess()
                 }
-                RoundAction(
-                    glyph = if (actionInFlight) "⏳" else "+1",
-                    enabled = isMyTurn && !actionInFlight,
-                    container = Color(0xFFE65100),
-                    size = 48.dp,
-                    glyphSize = 18.sp
-                ) {
-                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                    turnController.drawTile()
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    RoundAction(
+                        glyph = if (actionInFlight) "⏳" else "+1",
+                        enabled = isMyTurn && !actionInFlight,
+                        container = Color(0xFFE65100),
+                        size = 52.dp,
+                        glyphSize = 19.sp
+                    ) {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                        turnController.drawTile()
+                    }
+                    Text(
+                        text = "pioche ${serverBoard.drawPileCount}",
+                        color = Color(0xB3FFFFFF),
+                        fontSize = 8.sp,
+                        maxLines = 1
+                    )
                 }
                 RoundAction(
                     glyph = "↺",
@@ -354,22 +329,10 @@ fun GameScreen(
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     turnController.resetTurn()
                 }
-
                 if (selectedTileIds.isNotEmpty()) {
-                    RoundAction(glyph = "✕", enabled = true, container = Color(0xFF37474F), size = 36.dp, glyphSize = 16.sp) {
+                    RoundAction(glyph = "✕", enabled = true, container = Color(0xFF37474F), size = 34.dp, glyphSize = 15.sp) {
                         turnController.clearSelection()
                     }
-                }
-
-                RoundAction(glyph = "🌈", enabled = true, container = Color(0xFF3E2723), size = 36.dp, glyphSize = 16.sp) {
-                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
-                    turnController.sortByRun()
-                }
-                RoundAction(glyph = "🔢", enabled = true, container = Color(0xFF3E2723), size = 36.dp, glyphSize = 16.sp) {
-                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
-                    turnController.sortByGroup()
                 }
 
                 Spacer(modifier = Modifier.weight(1f))
@@ -406,8 +369,28 @@ fun GameScreen(
                             contentAlignment = Alignment.Center
                         ) { Text(if (isMicMuted) "🔇" else "🎙️", fontSize = 18.sp) }
                     }
-                } else {
-                    Text("🎙️\n✕", color = Color(0x66FFFFFF), fontSize = 12.sp, textAlign = TextAlign.Center)
+                }
+
+                // Menu: table code, connection quality, sound settings
+                var menuOpen by remember { mutableStateOf(false) }
+                Box {
+                    RoundAction(glyph = "⋯", enabled = true, container = Color(0xFF26140B), size = 38.dp, glyphSize = 20.sp) {
+                        menuOpen = true
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Table ${roomCode ?: "----"}") },
+                            onClick = { menuOpen = false }
+                        )
+                        DropdownMenuItem(
+                            text = { com.rummikub.app.ui.components.NetworkIndicator(connectionStatus, latencyMs) },
+                            onClick = { menuOpen = false }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("🎵 Musique et audio") },
+                            onClick = { menuOpen = false; showSettingsDialog = true }
+                        )
+                    }
                 }
             }
         }
@@ -462,6 +445,8 @@ private fun RibbonPlayer(
     isActiveTurn: Boolean,
     isSpeaking: Boolean,
     isMutedByMe: Boolean,
+    timerFraction: Float? = null,
+    secondsLeft: Int? = null,
     onToggleMute: () -> Unit
 ) {
     val borderColor = when {
@@ -479,18 +464,32 @@ private fun RibbonPlayer(
             .padding(vertical = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+            if (timerFraction != null) {
+                val ringColor = when {
+                    timerFraction > 0.5f -> Color(0xFF69F0AE)
+                    timerFraction > 0.2f -> Color(0xFFFFD54F)
+                    else -> Color(0xFFFF5252)
+                }
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val stroke = 3.dp.toPx()
+                    val tl = Offset(stroke / 2, stroke / 2)
+                    val sz = Size(size.width - stroke, size.height - stroke)
+                    drawArc(Color(0x33FFFFFF), 0f, 360f, false, tl, sz, style = Stroke(stroke))
+                    drawArc(ringColor, -90f, 360f * timerFraction, false, tl, sz, style = Stroke(stroke, cap = StrokeCap.Round))
+                }
+            }
             if (isSpeaking) {
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
                         .background(VadSpeakingHalo.copy(alpha = 0.35f))
                 )
             }
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(38.dp)
                     .clip(CircleShape)
                     .background(Brush.radialGradient(listOf(Color(0xFF5D4037), Color(0xFF3E2723))))
                     .border(if (isActiveTurn || isSpeaking) 2.5.dp else 1.dp, borderColor, CircleShape),
@@ -530,9 +529,10 @@ private fun RibbonPlayer(
             overflow = TextOverflow.Ellipsis
         )
         Text(
-            text = "${player.tileCount} tuiles",
+            text = if (secondsLeft != null) "${player.tileCount} tuiles · ${secondsLeft}s" else "${player.tileCount} tuiles",
             color = if (player.isConnected) Color(0xFFD7CCC8) else StatusReconnecting,
-            fontSize = 8.sp
+            fontSize = 8.sp,
+            maxLines = 1
         )
         if (player.totalScore != 0) {
             Text(

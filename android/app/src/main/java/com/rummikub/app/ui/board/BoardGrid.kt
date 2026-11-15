@@ -65,10 +65,10 @@ fun BoardGrid(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(FeltDarkGreen)
+            .background(Color(0x22000000))
             .border(
                 width = 2.dp,
-                color = if (hasSelection && isMyTurn) Color(0x8800E5FF) else Color(0xFF2E1A11),
+                color = if (hasSelection && isMyTurn) Color(0x8800E5FF) else Color(0x33FFD54F),
                 shape = RoundedCornerShape(12.dp)
             )
     ) { feltHovered ->
@@ -214,15 +214,15 @@ fun MeldGroupContainer(
 ) {
     val validation = remember(meld.tiles) { BoardValidator.validateMeld(meld) }
     val borderColor = when {
-        meld.tiles.size < 3 -> Color(0xFFFFA000).copy(alpha = 0.8f) // Incomplete (<3 tiles)
-        validation.isValid -> Color(0xFF81C784).copy(alpha = 0.6f)  // Valid set
+        meld.tiles.size < 3 -> Color(0xFFFFA000).copy(alpha = 0.55f) // Incomplete (<3 tiles)
+        validation.isValid -> Color(0xFF81C784).copy(alpha = 0.30f)  // Valid set
         else -> Color(0xFFE57373).copy(alpha = 0.9f)                // Illegal set
     }
 
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(FeltMediumGreen.copy(alpha = 0.60f))
+            .background(Color(0x0F000000))
             .border(1.5.dp, borderColor, RoundedCornerShape(8.dp))
             .padding(horizontal = 2.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -314,7 +314,7 @@ private fun EdgeDropZone(
                     when {
                         hovered -> Color(0xAA00E5FF)
                         highlight -> Color(0x5500E5FF)
-                        else -> Color(0x22FFFFFF)
+                        else -> Color.Transparent
                     }
                 )
         )
