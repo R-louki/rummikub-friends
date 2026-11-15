@@ -60,7 +60,8 @@ fun BoardGrid(
     onSelectChain: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val hasSelection = selectedTileIds.isNotEmpty()
+    // Drop zones light up while a tile is selected or carried
+    val hasSelection = selectedTileIds.isNotEmpty() || com.rummikub.app.ui.dnd.DragState.tileId != null
 
     // The whole felt accepts drops / taps to create a new meld
     DropZone(
@@ -272,7 +273,7 @@ fun MeldGroupContainer(
                         isNewThisTurn = tile.id in newTileIds,
                         isPlacedByOpponent = tile.id in placedByOthers,
                         isMovedByOpponent = tile.id in movedByOthers,
-                        isGhost = hovered,
+                        isGhost = hovered || com.rummikub.app.ui.dnd.DragState.tileId == tile.id,
                         modifier = Modifier.popIn().tileDragSource(
                             tileId = tile.id,
                             enabled = isMyTurn,

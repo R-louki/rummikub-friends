@@ -282,6 +282,7 @@ private fun RackTile(
         width = w,
         height = h,
         isSelected = selected,
+        isGhost = com.rummikub.app.ui.dnd.DragState.tileId == tile.id,
         modifier = Modifier.tileDragSource(
             tileId = tile.id,
             enabled = true, // the rack can always be rearranged, even outside my turn

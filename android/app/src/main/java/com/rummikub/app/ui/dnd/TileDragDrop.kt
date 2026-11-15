@@ -28,6 +28,11 @@ import androidx.compose.ui.draganddrop.toAndroidDragEvent
 private const val TILE_CLIP_LABEL = "rummikub_tile"
 
 /** How easily a rack tile starts to move under the finger: 0 = low, 1 = normal, 2 = high. */
+/** The tile currently carried by a finger (dimmed where it came from, drop zones light up). */
+object DragState {
+    var tileId by mutableStateOf<String?>(null)
+}
+
 object DragSettings {
     var level by mutableStateOf(1)
     val slopFactor: Float get() = when (level) { 0 -> 2.2f; 2 -> 0.45f; else -> 1f }
@@ -86,6 +91,7 @@ fun Modifier.tileDragSource(
                     val moved = change.position - down.position
                     if (!dragged && moved.getDistance() > viewConfiguration.touchSlop * DragSettings.slopFactor) {
                         dragged = true
+                        DragState.tileId = tileId
                         startTransfer(
                             DragAndDropTransferData(clipData = ClipData.newPlainText(TILE_CLIP_LABEL, tileId))
                         )
@@ -99,6 +105,7 @@ fun Modifier.tileDragSource(
         detectTapGestures(
             onTap = { currentOnTap() },
             onLongPress = {
+                DragState.tileId = tileId
                 startTransfer(
                     DragAndDropTransferData(
                         clipData = ClipData.newPlainText(TILE_CLIP_LABEL, tileId)
@@ -130,6 +137,7 @@ fun DropZone(
         object : DragAndDropTarget {
             override fun onDrop(event: DragAndDropEvent): Boolean {
                 hovered = false
+                DragState.tileId = null
                 val id = event.tileId() ?: return false
                 currentOnDrop(id)
                 return true
@@ -145,6 +153,7 @@ fun DropZone(
 
             override fun onEnded(event: DragAndDropEvent) {
                 hovered = false
+                DragState.tileId = null
             }
         }
     }
