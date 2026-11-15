@@ -75,11 +75,16 @@ private fun Preview(screen: String) {
             onlineFriendIds = setOf("u-karim"), lastSeen = sampleSeen, invitedIds = setOf(),
             signedIn = screen == "waiting", onInviteFriend = {}
         )
-        "rack", "rack_folded", "rack_sel" -> {
-            val tiles = (1..13).map { Tile(id = "t$it", color = TileColor.values()[it % 4], number = (it % 13) + 1) } + Tile(id = "tj", isJoker = true)
+        "rack", "rack_folded", "rack_sel", "rack_sort" -> {
+            val tiles = if (screen == "rack_sort") listOf(
+                Tile("a", TileColor.BLUE, 9), Tile("b", TileColor.RED, 9), Tile("c", TileColor.BLUE, 7), Tile("d", TileColor.YELLOW, 2),
+                Tile("e", TileColor.BLACK, 9), Tile("f", TileColor.BLUE, 8), Tile("g", TileColor.RED, 4), Tile("h", TileColor.BLACK, 12),
+                Tile("i", TileColor.YELLOW, 9), Tile("j", TileColor.RED, 5), Tile("k", TileColor.BLUE, 13), Tile("l", TileColor.RED, 1),
+                Tile("m", TileColor.YELLOW, 6), Tile("n", TileColor.BLACK, 3)
+            ) else (1..13).map { Tile(id = "t$it", color = TileColor.values()[it % 4], number = (it % 13) + 1) } + Tile(id = "tj", isJoker = true)
             androidx.compose.foundation.layout.Box(Modifier.background(Color(0xFF0C2B18)).padding(top = 120.dp)) {
                 com.rummikub.app.ui.rack.PlayerRackView(
-                    rack = com.rummikub.core.model.PlayerRack(playerId = "p1", tiles = tiles), layoutEpoch = 0, collapsed = screen == "rack_folded", onToggleCollapsed = {}, onSortRuns = {}, onSortGroups = {}, isMyTurn = true,
+                    rack = com.rummikub.core.model.PlayerRack(playerId = "p1", tiles = tiles), layoutEpoch = 0, sortMode = if (screen == "rack_sort") 1 else 0, collapsed = screen == "rack_folded", onToggleCollapsed = {}, onSortRuns = {}, onSortGroups = {}, isMyTurn = true,
                     selectedTileIds = if (screen == "rack_sel") setOf("t3", "t4") else emptySet(), onTileTapped = {}, onTileDroppedOnRack = {}, onRackTapped = {},
                 )
             }

@@ -393,7 +393,7 @@ fun GameScreen(
                     turnController.resetTurn()
                 }
                 if (selectedTileIds.isNotEmpty()) {
-                    RoundAction(glyph = "✕", enabled = true, container = Color(0xFF37474F), size = 32.dp, glyphSize = 14.sp) {
+                    RoundAction(glyph = "${selectedTileIds.size}✕", enabled = true, container = Color(0xFF37474F), size = 34.dp, glyphSize = 12.sp) {
                         turnController.clearSelection()
                     }
                 }
@@ -491,6 +491,17 @@ fun GameScreen(
                             .getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
                         val levelNames = listOf("Faible", "Normale", "Élevée")
                         val micLevel by audioController.voiceChat.micSensitivity.collectAsState()
+                        val gains = listOf(0.5f, 0.75f, 1f, 1.5f, 2f, 3f)
+                        var micGain by remember { mutableStateOf(audioBridge.micGain) }
+                        DropdownMenuItem(
+                            text = { Text("🎙️ Volume du micro : ${(micGain * 100).toInt()} %") },
+                            onClick = {
+                                val next = gains[(gains.indexOfFirst { kotlin.math.abs(it - micGain) < 0.01f } + 1).mod(gains.size)]
+                                micGain = next
+                                audioBridge.micGain = next
+                                prefs.edit().putFloat("micgain", next).apply()
+                            }
+                        )
                         DropdownMenuItem(
                             text = { Text("🎙️ Sensibilité micro : ${levelNames[micLevel]}") },
                             onClick = {

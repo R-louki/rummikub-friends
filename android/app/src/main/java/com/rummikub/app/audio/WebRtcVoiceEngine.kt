@@ -68,6 +68,9 @@ class WebRtcVoiceEngine(
 
     val isRunning: Boolean get() = factory != null
 
+    /** Microphone volume (1.0 = unchanged). Applied to the recorded samples before they are sent. */
+    @Volatile var micGain: Float = 1f
+
     /** Human-readable state of the live voice, shown in the game menu (helps to find why it is silent). */
     private val _status = MutableStateFlow("démarrage…")
     val status: StateFlow<String> = _status.asStateFlow()
@@ -156,6 +159,20 @@ class WebRtcVoiceEngine(
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
+            .setAudioRecordDataCallback(object : org.webrtc.audio.AudioRecordDataCallback {
+                override fun onAudioDataRecorded(audioFormat: Int, channelCount: Int, sampleRate: Int, audioBuffer: java.nio.ByteBuffer) {
+                    val g = micGain
+                    if (g == 1f || audioFormat != android.media.AudioFormat.ENCODING_PCM_16BIT) return
+                    val b = audioBuffer.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    var i = b.position()
+                    val end = b.limit()
+                    while (i + 1 < end) {
+                        val v = (b.getShort(i) * g).toInt().coerceIn(-32768, 32767)
+                        b.putShort(i, v.toShort())
+                        i += 2
+                    }
+                }
+            })
             .setSamplesReadyCallback { samples -> reportLevel(samples) }
             .createAudioDeviceModule()
 

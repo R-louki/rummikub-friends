@@ -152,6 +152,7 @@ class MainActivity : ComponentActivity() {
         com.rummikub.app.ui.theme.ThemeState.select(settings.getInt("theme_v2", 0))
         com.rummikub.app.ui.dnd.DragSettings.level = settings.getInt("drag", 1)
         audioController.voiceChat.setMicSensitivity(settings.getInt("mic", 1))
+        audioBridge.micGain = settings.getFloat("micgain", 1f)
 
         val alreadyGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         micPermissionGranted.value = alreadyGranted

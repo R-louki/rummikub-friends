@@ -45,6 +45,11 @@ class AndroidAudioBridge(
     private var lastMuted: Set<String> = emptySet()
 
     val isVoiceRunning: Boolean get() = voice.isRunning
+
+    /** Microphone volume: 0.5 = half, 1 = unchanged, 3 = three times louder. */
+    var micGain: Float
+        get() = voice.micGain
+        set(value) { voice.micGain = value.coerceIn(0.25f, 4f) }
     val voiceStatus: kotlinx.coroutines.flow.StateFlow<String> get() = voice.status
 
     init {

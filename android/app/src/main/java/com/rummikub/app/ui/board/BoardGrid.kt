@@ -232,8 +232,7 @@ fun MeldGroupContainer(
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0x0F000000))
+            .background(Color(0x0F000000), RoundedCornerShape(8.dp))
             .border(1.5.dp, borderColor, RoundedCornerShape(8.dp))
             .padding(horizontal = 2.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
