@@ -743,7 +743,7 @@ export class Room {
     // Turn is Valid! Commit state
     this.consecutivePasses = 0;
     this.boardState.versionId++;
-    this.boardState.melds = proposedBoard.melds;
+    this.boardState.melds = BoardValidator.normalizeRunOrder(proposedBoard.melds, boardValidation.meldResults);
     this.recordDelta(this.boardState.melds);
 
     // Update player rack

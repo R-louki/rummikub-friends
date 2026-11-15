@@ -276,7 +276,7 @@ class TurnController(
                 val idx = melds.indexOfFirst { it.id == target.meldId }
                 melds = if (idx < 0) {
                     melds + MeldSet(tiles = listOf(tile))
-                } else if (!fitsMeld(melds[idx], tile)) {
+                } else if (!fitsMeld(melds[idx], tile) || (tile.isJoker && jokerSlot(melds[idx], target.index) == null)) {
                     // Poka-yoke: a tile that cannot belong to this combination is never forced into it
                     _messages.tryEmit("Cette tuile ne va pas avec cette combinaison : posée à part.")
                     melds + MeldSet(tiles = listOf(tile))
@@ -294,7 +294,8 @@ class TurnController(
                             it.add(idx + 1, MeldSet(tiles = right, gridRow = m.gridRow, gridCol = m.gridCol))
                         }
                     } else {
-                        val insertAt = snapInsertIndex(m, tile) ?: target.index.coerceIn(0, m.tiles.size)
+                        val insertAt = (if (tile.isJoker) jokerSlot(m, target.index) else snapInsertIndex(m, tile))
+                            ?: target.index.coerceIn(0, m.tiles.size)
                         melds.toMutableList().also { it[idx] = m.withTileInserted(insertAt, tile) }
                     }
                 }
@@ -302,6 +303,34 @@ class TurnController(
         }
 
         commitWorkingState(board.copy(melds = melds), rack.copy(tiles = rackTiles), tileId)
+    }
+
+    /**
+     * Where a joker may go in [meld]: never between two consecutive numbers (4 ★ 5 is impossible).
+     * Inside a run it is kept at the drop spot only if a number is really missing there, otherwise it
+     * moves to the nearest free end; null when the run cannot take it at all. Groups: anywhere.
+     */
+    private fun jokerSlot(meld: MeldSet, dropIndex: Int): Int? {
+        val tiles = meld.tiles
+        val numbered = tiles.filterNot { it.isJoker }
+        if (numbered.size < 2 || numbered.map { it.number }.distinct().size == 1) return dropIndex.coerceIn(0, tiles.size)
+        val first = tiles.indexOfFirst { !it.isJoker }
+        val start = tiles[first].number - first
+        val end = start + tiles.size - 1
+        val canLeft = start > 1
+        val canRight = end < 13
+        fun valid(p: Int): Boolean {
+            if (p == 0) return canLeft
+            if (p == tiles.size) return canRight
+            val left = (p - 1 downTo 0).firstOrNull { !tiles[it].isJoker } ?: return canLeft
+            val right = (p until tiles.size).firstOrNull { !tiles[it].isJoker } ?: return canRight
+            val missing = tiles[right].number - tiles[left].number - 1
+            return missing > (right - left - 1)
+        }
+        val p = dropIndex.coerceIn(0, tiles.size)
+        if (valid(p)) return p
+        return listOfNotNull(if (canLeft) 0 else null, if (canRight) tiles.size else null)
+            .minByOrNull { kotlin.math.abs(it - p) }
     }
 
     /**

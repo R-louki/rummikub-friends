@@ -91,3 +91,14 @@ test('BoardValidator: run in shuffled order is invalid', () => {
   const descending: MeldSet = { id: 'm11', gridRow: 0, gridCol: 0, tiles: [t('a', 5), t('c', 4), t('b', 3)] };
   assert.strictEqual(BoardValidator.validateMeld(descending).isValid, false);
 });
+
+test('a joker placed between two consecutive numbers is stored at the end of the run', () => {
+  const t = (id: string, n: number, joker = false): any =>
+    joker ? { id, isJoker: true } : { id, color: 'BLACK', number: n, isJoker: false };
+  const meld: any = { id: 'M1', tiles: [t('a', 4), t('j', 0, true), t('b', 5)] };
+  const board: any = { versionId: 1, melds: [meld], drawPileCount: 0, activePlayerId: '', turnRemainingMillis: 0, isGracePeriod: false, disconnectedPlayerId: null };
+  const result = BoardValidator.validateBoard(board);
+  assert.strictEqual(result.isValid, true);
+  const normalized = BoardValidator.normalizeRunOrder(board.melds, result.meldResults);
+  assert.deepStrictEqual(normalized[0].tiles.map((x: any) => x.id), ['j', 'a', 'b']);
+});

@@ -42,6 +42,24 @@ export class BoardValidator {
     };
   }
 
+  /**
+   * A run accepted through the flexible-joker path (e.g. 4 ★ 5 read as ★ 4 5) is stored in its real
+   * order, so a joker never sits between two consecutive numbers on the table.
+   */
+  static normalizeRunOrder(melds: MeldSet[], results: MeldValidationResult[]): MeldSet[] {
+    const order = new Map<string, string[]>();
+    for (const r of results) {
+      if (r.isValid && r.meldType === 'RUN') order.set(r.meldId, r.resolvedTiles.map(t => t.id));
+    }
+    return melds.map(m => {
+      const ids = order.get(m.id);
+      if (!ids) return m;
+      const byId = new Map<string, Tile>(m.tiles.map(t => [t.id, t]));
+      const reordered = ids.map(id => byId.get(id)).filter((t): t is Tile => !!t);
+      return reordered.length === m.tiles.length ? { ...m, tiles: reordered } : m;
+    });
+  }
+
   static validateMeld(
     meld: MeldSet,
     strategy: JokerPointStrategy = 'REPLACED_TILE_VALUE'
