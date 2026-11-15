@@ -267,7 +267,7 @@ class TurnController(
                             it.add(idx + 1, MeldSet(tiles = right, gridRow = m.gridRow, gridCol = m.gridCol))
                         }
                     } else {
-                        val insertAt = target.index.coerceIn(0, m.tiles.size)
+                        val insertAt = snapInsertIndex(m, tile) ?: target.index.coerceIn(0, m.tiles.size)
                         melds.toMutableList().also { it[idx] = m.withTileInserted(insertAt, tile) }
                     }
                 }
@@ -275,6 +275,20 @@ class TurnController(
         }
 
         commitWorkingState(board.copy(melds = melds), rack.copy(tiles = rackTiles), tileId)
+    }
+
+    /**
+     * If [meld] is a run without jokers and [tile] has the run's colour, returns the index that keeps
+     * the numbers in order wherever the tile was dropped (mistakes made impossible). Null: use the drop spot.
+     */
+    private fun snapInsertIndex(meld: MeldSet, tile: Tile): Int? {
+        if (tile.isJoker || meld.tiles.any { it.isJoker }) return null
+        val numbers = meld.tiles.map { it.number }
+        if (meld.tiles.map { it.color }.distinct().size != 1 || numbers.distinct().size < 2) return null
+        if (meld.tiles.first().color != tile.color) return null
+        val sorted = numbers.zipWithNext().all { (x, y) -> x < y }
+        if (!sorted) return null
+        return numbers.count { it < tile.number }
     }
 
     /**
@@ -311,6 +325,21 @@ class TurnController(
         if (i < 0) return melds
         val left = meld.tiles.subList(0, i).toList()
         val right = meld.tiles.subList(i + 1, meld.tiles.size).toList()
+
+        // A group (same number, different colours): the remaining tiles simply stay together.
+        // Only a run is cut in two when a tile is taken from its middle.
+        val numbered = meld.tiles.filterNot { it.isJoker }
+        val isGroup = numbered.size >= 2 && numbered.map { it.number }.distinct().size == 1
+        if (isGroup) {
+            val rest = left + right
+            return melds.mapNotNull { m ->
+                when {
+                    m.id != meld.id -> m
+                    rest.isEmpty() -> null
+                    else -> m.copy(tiles = rest)
+                }
+            }
+        }
 
         val result = ArrayList<MeldSet>(melds.size + 1)
         for (m in melds) {

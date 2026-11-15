@@ -84,9 +84,21 @@ class WebRtcVoiceEngine(
                 .createInitializationOptions()
         )
 
+        // With a headset / Bluetooth speaker the voices must play there as normal "media" (stereo, good
+        // quality), not through the phone's call routing; without one, the phone sits on the table.
+        val headset = headsetConnected()
         val adm = JavaAudioDeviceModule.builder(appContext)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
+            .setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(
+                        if (headset) android.media.AudioAttributes.USAGE_MEDIA
+                        else android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION
+                    )
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
             .setSamplesReadyCallback { samples -> reportLevel(samples) }
             .createAudioDeviceModule()
 
@@ -101,19 +113,58 @@ class WebRtcVoiceEngine(
             mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+            optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression2", "true"))
+            optional.add(MediaConstraints.KeyValuePair("googEchoCancellation2", "true"))
+            optional.add(MediaConstraints.KeyValuePair("googAutoGainControl2", "true"))
         }
         audioSource = f.createAudioSource(constraints)
         localTrack = f.createAudioTrack("RUMMI_MIC", audioSource).also { it.setEnabled(micEnabled) }
 
-        // Players put the phone on the table: loudspeaker + communication mode (echo cancellation path)
+        applyRoute()
+        try { audioManager.registerAudioDeviceCallback(deviceCallback, main) } catch (_: Exception) {}
+    }
+
+    /** True when a Bluetooth or wired headset / speaker is the current audio output. */
+    private fun headsetConnected(): Boolean = try {
+        audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            when (it.type) {
+                android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                android.media.AudioDeviceInfo.TYPE_BLE_HEADSET,
+                android.media.AudioDeviceInfo.TYPE_BLE_SPEAKER,
+                android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                android.media.AudioDeviceInfo.TYPE_USB_HEADSET -> true
+                else -> false
+            }
+        }
+    } catch (_: Exception) { false }
+
+    /**
+     * Headset connected: leave the routing alone (the system keeps sending sound to it).
+     * Otherwise the phone is on the table: communication mode + loudspeaker.
+     */
+    private fun applyRoute() {
         try {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            @Suppress("DEPRECATION")
-            audioManager.isSpeakerphoneOn = true
+            if (headsetConnected()) {
+                audioManager.mode = AudioManager.MODE_NORMAL
+                @Suppress("DEPRECATION")
+                audioManager.isSpeakerphoneOn = false
+            } else {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                @Suppress("DEPRECATION")
+                audioManager.isSpeakerphoneOn = true
+            }
         } catch (_: Exception) {}
     }
 
+    private val deviceCallback = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>) { applyRoute() }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>) { applyRoute() }
+    }
+
     fun stop() {
+        try { audioManager.unregisterAudioDeviceCallback(deviceCallback) } catch (_: Exception) {}
         for ((_, peer) in peers) {
             try { peer.pc.close() } catch (_: Exception) {}
         }
