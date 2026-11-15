@@ -251,7 +251,12 @@ fun GameScreen(
                         },
                         modifier = Modifier.fillMaxSize()
                     )
-                    if (hint != null) {
+                    // The hint fades after a moment instead of staying over the table
+                    var hintVisible by remember { mutableStateOf(false) }
+                    LaunchedEffect(hint) {
+                        if (hint == null) { hintVisible = false } else { hintVisible = true; delay(2500); hintVisible = false }
+                    }
+                    if (hint != null && hintVisible) {
                         Text(
                             text = hint,
                             color = statusColor,
@@ -262,7 +267,7 @@ fun GameScreen(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(bottom = 6.dp, start = 12.dp, end = 12.dp)
-                                .background(Color(0x99000000), RoundedCornerShape(12.dp))
+                                .background(Color(0x77000000), RoundedCornerShape(12.dp))
                                 .padding(horizontal = 10.dp, vertical = 3.dp)
                         )
                     }
