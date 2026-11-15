@@ -583,6 +583,10 @@ class GameNetworkRepository(
                 // Refusals of a turn action (nothing played, invalid proposal) also answer it
                 if (packet.code == "NO_TILES_PLAYED" || packet.code == "INVALID_PROPOSAL") clearPendingAction()
                 _errors.emit(packet.message)
+                if (packet.code == "RECONNECT_FAILED") {
+                    // The server no longer knows this table (restart, timeout): stop retrying and go home.
+                    leaveRoom()
+                }
             }
 
             else -> {

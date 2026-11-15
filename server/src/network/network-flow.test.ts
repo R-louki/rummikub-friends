@@ -408,3 +408,29 @@ test('Room: with a first-meld threshold of 0 players may touch existing melds ri
   assert.strictEqual(room.boardState.activePlayerId, 'P2');
   room.dispose();
 });
+
+test('RoomManager: the late close of an OLD socket must not disconnect the player who already reconnected', () => {
+  const manager = new RoomManager();
+  const oldSocket = ws();
+  const { room, playerId, sessionToken } = manager.createRoom('Alice', asWs(oldSocket), { ...DEFAULT_GAME_CONFIG, botCount: 1, maxPlayers: 2, turnDurationSeconds: 0 });
+  room.startGame();
+
+  // The phone reconnects on a new socket while the old (dead) one is still open on the server side
+  const newSocket = ws();
+  const result = manager.reconnect(room.roomCode, playerId, sessionToken, 1, asWs(newSocket));
+  assert.strictEqual(result?.success, true);
+
+  // ... then the server finally notices the old socket is gone
+  manager.handleSocketDisconnect(asWs(oldSocket));
+
+  const player = room.players.get(playerId)!;
+  assert.strictEqual(player.isConnected, true, 'player must stay connected');
+  assert.strictEqual(room.sockets.get(playerId), asWs(newSocket), 'the new socket must stay registered');
+  assert.strictEqual(room.boardState.isGracePeriod, false);
+
+  // The new socket still receives game events
+  const before = newSocket.sentPackets.length;
+  room.handleDrawTile(playerId);
+  assert.ok(newSocket.sentPackets.length > before, 'events must reach the new socket');
+  room.dispose();
+});

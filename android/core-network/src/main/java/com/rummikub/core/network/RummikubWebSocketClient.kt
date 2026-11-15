@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import java.util.concurrent.TimeUnit
@@ -135,9 +136,16 @@ class RummikubWebSocketClient(
         receiveJob = null
         val current = session
         session = null
-        try {
-            current?.close()
-        } catch (_: Exception) {}
+        if (current != null) {
+            // A half-open connection cannot complete the close handshake: bound the wait, then
+            // cancel the session outright so the reconnection is never held up by a dead socket.
+            try {
+                withTimeout(1_500L) { current.close() }
+            } catch (_: Exception) {}
+            try {
+                current.cancel()
+            } catch (_: Exception) {}
+        }
     }
 
     fun close() {

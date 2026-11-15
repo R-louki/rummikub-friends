@@ -72,6 +72,14 @@ export class RoomManager {
 
     const ok = room.reconnectPlayer(playerId, sessionToken, lastKnownVersionId, socket);
     if (ok) {
+      // Any older socket of this player is stale: forget it first so its (late) close event
+      // can never be mistaken for a disconnection of the player who is already back.
+      for (const [other, entry] of Array.from(this.socketToRoom.entries())) {
+        if (other !== socket && entry.playerId === playerId && entry.roomCode === room.roomCode) {
+          this.socketToRoom.delete(other);
+          try { other.terminate(); } catch { /* already closed */ }
+        }
+      }
       this.socketToRoom.set(socket, { roomCode: room.roomCode, playerId });
       this.cancelEmptyRoomTimer(room.roomCode);
     }
@@ -86,6 +94,9 @@ export class RoomManager {
     this.socketToRoom.delete(socket);
     const room = this.rooms.get(entry.roomCode);
     if (room) {
+      // Only the player's CURRENT socket counts: a stale socket closing says nothing about him.
+      const current = room.sockets.get(entry.playerId);
+      if (current && current !== socket) return;
       room.handleDisconnect(entry.playerId);
       this.checkRoomLifecycle(room);
     }

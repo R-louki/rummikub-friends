@@ -303,6 +303,12 @@ export class Room {
 
     const wasPaused = this.status === 'IN_GAME' && this.allDisconnected;
 
+    // Drop the previous (stale) socket, if any, so only one connection per player stays alive.
+    const previous = this.sockets.get(playerId);
+    if (previous && previous !== newSocket) {
+      try { previous.terminate(); } catch { /* already closed */ }
+    }
+
     player.isConnected = true;
     player.rack.isConnected = true;
     player.lastHeartbeatTime = Date.now();

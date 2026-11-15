@@ -93,13 +93,27 @@ class TurnController(
     init {
         scope.launch {
             repository.boardState.collect { server ->
-                snapshotBoard = server
-                _board.value = server
-                _selectedTileIds.value = emptyList()
+                val sameTurn = server.versionId == snapshotBoard.versionId &&
+                    server.activePlayerId == snapshotBoard.activePlayerId &&
+                    server.melds == snapshotBoard.melds
+                if (sameTurn) {
+                    // Nothing changed on the server (e.g. a reconnection snapshot): keep the player's work.
+                    snapshotBoard = server
+                } else {
+                    snapshotBoard = server
+                    _board.value = server
+                    _selectedTileIds.value = emptyList()
+                }
             }
         }
         scope.launch {
             repository.playerRack.collect { server ->
+                val sameRack = server.tiles.map { it.id }.toSet() == snapshotRack.tiles.map { it.id }.toSet() &&
+                    server.hasMadeInitialMeld == snapshotRack.hasMadeInitialMeld
+                if (sameRack) {
+                    snapshotRack = server.copy(tiles = snapshotRack.tiles)
+                    return@collect
+                }
                 val merged = mergeKeepingOrder(_rack.value.tiles, server.tiles)
                 snapshotRack = server.copy(tiles = merged)
                 _rack.value = snapshotRack
