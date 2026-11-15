@@ -52,6 +52,10 @@ class GameNetworkRepository(
     private val _gameConfig = MutableStateFlow(GameConfig.STANDARD)
     val gameConfig: StateFlow<GameConfig> = _gameConfig.asStateFlow()
 
+    private val _lastMove = MutableStateFlow<LastMove?>(null)
+    /** The last move of an opponent (null after my own action or a new game). */
+    val lastMove: StateFlow<LastMove?> = _lastMove.asStateFlow()
+
     private val _gracePeriodCountdown = MutableStateFlow<Int?>(null)
     val gracePeriodCountdown: StateFlow<Int?> = _gracePeriodCountdown.asStateFlow()
 
@@ -413,6 +417,55 @@ class GameNetworkRepository(
     // INCOMING PACKET DISPATCHER
     // ==========================================
 
+    private fun tileLabel(t: Tile): String {
+        if (t.isJoker) return "joker"
+        val color = when (t.color) {
+            TileColor.BLACK -> "noir"
+            TileColor.BLUE -> "bleu"
+            TileColor.RED -> "rouge"
+            TileColor.YELLOW -> "jaune"
+            null -> ""
+        }
+        return "${t.number} $color"
+    }
+
+    /**
+     * Compares the table before and after an opponent's turn.
+     * A tile is "placed" if it was not on the table, "moved" if it kept less than half of the
+     * tiles of its former combination (so extending a run does not flag the whole run).
+     */
+    private fun describeMove(oldMelds: List<MeldSet>, newMelds: List<MeldSet>, actorId: String): LastMove {
+        val who = _players.value.firstOrNull { it.id == actorId }?.name ?: "Un joueur"
+        val oldSetOfTile = HashMap<String, Set<String>>()
+        for (m in oldMelds) {
+            val ids = m.tiles.map { it.id }.toSet()
+            for (id in ids) oldSetOfTile[id] = ids
+        }
+        val placedTiles = ArrayList<Tile>()
+        val moved = HashSet<String>()
+        for (m in newMelds) {
+            val newIds = m.tiles.map { it.id }.toSet()
+            for (t in m.tiles) {
+                val old = oldSetOfTile[t.id]
+                if (old == null) {
+                    placedTiles += t
+                } else if ((old intersect newIds).size * 2 < old.size) {
+                    moved += t.id
+                }
+            }
+        }
+        val parts = ArrayList<String>()
+        if (placedTiles.isNotEmpty()) {
+            val shown = placedTiles.take(5).joinToString(", ") { tileLabel(it) }
+            parts += "a posé " + shown + if (placedTiles.size > 5) "…" else ""
+        }
+        if (moved.isNotEmpty()) {
+            parts += (if (placedTiles.isEmpty()) "a déplacé " else "déplacé ") + moved.size + if (moved.size > 1) " tuiles" else " tuile"
+        }
+        val text = if (parts.isEmpty()) "$who a joué" else "$who " + parts.joinToString(" et ")
+        return LastMove(actorId, who, placedTiles.map { it.id }.toSet(), moved, text)
+    }
+
     private fun fullTurnMillis(): Long = _gameConfig.value.turnDurationSeconds * 1000L
 
     private fun updateTileCounts(counts: Map<String, Int>) {
@@ -457,6 +510,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.GameStartedEvent -> {
+                _lastMove.value = null
                 _gracePeriodCountdown.value = null
                 _boardState.value = packet.boardState
                 _playerRack.value = packet.initialRack
@@ -471,7 +525,12 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TurnCommittedEvent -> {
-                if (packet.activePlayerId == _myPlayerId.value) clearPendingAction()
+                if (packet.activePlayerId == _myPlayerId.value) {
+                    clearPendingAction()
+                    _lastMove.value = null
+                } else {
+                    _lastMove.value = describeMove(_boardState.value.melds, packet.boardState.melds, packet.activePlayerId)
+                }
                 // The server broadcasts the board before switching turns: apply nextPlayerId ourselves.
                 _boardState.value = packet.boardState.copy(
                     activePlayerId = packet.nextPlayerId,
@@ -485,6 +544,7 @@ class GameNetworkRepository(
 
             is NetworkPacket.TurnRollbackEvent -> {
                 if (packet.playerId == _myPlayerId.value) clearPendingAction()
+                _lastMove.value = null
                 _gracePeriodCountdown.value = null
                 _boardState.value = packet.restoredBoardState.copy(
                     activePlayerId = packet.nextPlayerId,
@@ -500,7 +560,13 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TileDrawnEvent -> {
-                if (packet.playerId == _myPlayerId.value) clearPendingAction()
+                if (packet.playerId == _myPlayerId.value) {
+                    clearPendingAction()
+                    _lastMove.value = null
+                } else {
+                    val who = _players.value.firstOrNull { it.id == packet.playerId }?.name ?: "Un joueur"
+                    _lastMove.value = LastMove(packet.playerId, who, emptySet(), emptySet(), "$who a pioché une tuile")
+                }
                 _boardState.value = _boardState.value.copy(
                     drawPileCount = packet.newDrawPileCount,
                     activePlayerId = packet.nextPlayerId,

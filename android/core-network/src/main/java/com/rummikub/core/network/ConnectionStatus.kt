@@ -38,3 +38,17 @@ sealed class ConnectionStatus {
 
     data class Failed(val error: Throwable) : ConnectionStatus()
 }
+
+/**
+ * What another player just did on the table, so the UI can show it.
+ *
+ * @param placed Tiles that came from the player's rack this turn.
+ * @param moved  Tiles that were already on the table but now belong to a different combination.
+ */
+data class LastMove(
+    val playerId: String,
+    val playerName: String,
+    val placed: Set<String>,
+    val moved: Set<String>,
+    val description: String
+)

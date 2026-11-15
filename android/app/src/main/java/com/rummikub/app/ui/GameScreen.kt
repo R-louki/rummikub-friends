@@ -66,6 +66,7 @@ fun GameScreen(
     val isMyTurn by networkRepository.isMyTurn.collectAsState()
     val latencyMs by networkRepository.latencyMs.collectAsState()
     val graceCountdown by networkRepository.gracePeriodCountdown.collectAsState()
+    val lastMove by networkRepository.lastMove.collectAsState()
 
     // Working (local, in-progress) state of the turn
     val workingBoard by turnController.board.collectAsState()
@@ -127,8 +128,10 @@ fun GameScreen(
     val activePlayerName = players.firstOrNull { it.id == serverBoard.activePlayerId }?.name ?: "..."
     val hasMadeInitialMeld = workingRack.hasMadeInitialMeld
 
+    val activeIsBot = players.firstOrNull { it.id == serverBoard.activePlayerId }?.isBot == true
     val statusText = when {
         isGracePeriod -> "Attente de reconnexion de $activePlayerName..."
+        !isMyTurn && activeIsBot -> "$activePlayerName réfléchit..."
         !isMyTurn -> "Tour de $activePlayerName"
         summary.invalidMeldCount > 0 -> "À vous · ${summary.invalidMeldCount} combinaison(s) invalide(s)"
         !hasMadeInitialMeld && gameConfig.initialMeldThreshold > 0 ->
@@ -257,14 +260,31 @@ fun GameScreen(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 3.dp)
+                        .padding(bottom = if (lastMove != null) 0.dp else 3.dp)
                 )
+                // What the opponent just did: orange = laid down from the rack, violet = moved on the table
+                lastMove?.let { move ->
+                    Text(
+                        text = "Dernier coup : ${move.description}" +
+                            (if (move.placed.isNotEmpty()) "  ■ orange = posées" else "") +
+                            (if (move.moved.isNotEmpty()) "  ■ violet = déplacées" else ""),
+                        color = Color(0xFFFFB74D),
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 3.dp)
+                    )
+                }
 
                 BoardGrid(
                     boardState = workingBoard,
                     isMyTurn = isMyTurn,
                     newTileIds = newTileIds,
                     selectedTileIds = selectedTileIds,
+                    placedByOthers = lastMove?.placed ?: emptySet(),
+                    movedByOthers = lastMove?.moved ?: emptySet(),
                     initialMeldThreshold = if (hasMadeInitialMeld) 0 else gameConfig.initialMeldThreshold,
                     onTileTapped = { tile -> turnController.toggleSelection(tile.id) },
                     onTileDropped = { tileId, target ->

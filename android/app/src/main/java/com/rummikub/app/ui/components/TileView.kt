@@ -43,6 +43,8 @@ fun TileView(
     isDragging: Boolean = false,
     isSelected: Boolean = false,
     isNewThisTurn: Boolean = false,
+    isPlacedByOpponent: Boolean = false,
+    isMovedByOpponent: Boolean = false,
     isGhost: Boolean = false,
     width: Dp = 42.dp,
     height: Dp = 58.dp
@@ -75,9 +77,11 @@ fun TileView(
     val borderColor = when {
         isSelected -> Color(0xFFFFD54F)
         isNewThisTurn -> Color(0xFF4FC3F7)
+        isPlacedByOpponent -> Color(0xFFFF6D00)   // orange: just laid down from the opponent's rack
+        isMovedByOpponent -> Color(0xFFD500F9)    // violet: moved by the opponent
         else -> Color(0xFFC0B8A2)
     }
-    val borderWidth = if (isSelected || isNewThisTurn) 2.dp else 1.dp
+    val borderWidth = if (isSelected || isNewThisTurn || isPlacedByOpponent || isMovedByOpponent) 3.dp else 1.dp
 
     Box(
         modifier = modifier
