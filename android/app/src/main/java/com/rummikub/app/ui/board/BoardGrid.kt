@@ -90,8 +90,8 @@ fun BoardGrid(
                     Text(
                         text = when {
                             !isMyTurn -> "En attente des coups des joueurs..."
-                            initialMeldThreshold > 0 -> "Touchez vos tuiles pour les sélectionner, puis touchez la table.\nOu appui long pour glisser. Première pose : $initialMeldThreshold pts minimum."
-                            else -> "Touchez vos tuiles pour les sélectionner, puis touchez la table.\nOu appui long pour glisser."
+                            initialMeldThreshold > 0 -> "Touchez vos tuiles pour les sélectionner, puis touchez la table.\nOu glissez-les directement. Première pose : $initialMeldThreshold pts minimum."
+                            else -> "Touchez vos tuiles pour les sélectionner, puis touchez la table.\nOu glissez-les directement."
                         },
                         color = Color(0x88FFFFFF),
                         fontSize = 12.sp,
@@ -269,6 +269,7 @@ fun MeldGroupContainer(
                         modifier = Modifier.popIn().tileDragSource(
                             tileId = tile.id,
                             enabled = isMyTurn,
+                            immediateDrag = true,
                             onTap = tapAction
                         )
                     )
