@@ -154,23 +154,30 @@ fun TileView(
                 )
         )
         if (tile.isJoker) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = "★",
-                    color = tileColor.copy(alpha = alpha),
-                    fontSize = (width.value * 0.48f).sp,
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Center
+            // Joker: a smiling face in a ring with the four tile colours
+            androidx.compose.foundation.Canvas(modifier = Modifier.size(width * 0.70f)) {
+                val w = size.width
+                val ring = w * 0.09f
+                drawCircle(
+                    brush = Brush.sweepGradient(
+                        listOf(
+                            Color(0xFFE02828), Color(0xFFE08A00), Color(0xFF1E57F0),
+                            Color(0xFF18181B), Color(0xFFE02828)
+                        )
+                    ),
+                    radius = w / 2f - ring / 2f,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(ring)
                 )
-                Text(
-                    text = "☺",
-                    color = tileColor.copy(alpha = alpha),
-                    fontSize = (width.value * 0.29f).sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
+                val ink = Color(0xFF2A2A30).copy(alpha = alpha)
+                val eye = w * 0.055f
+                drawCircle(ink, eye, androidx.compose.ui.geometry.Offset(w * 0.37f, w * 0.40f))
+                drawCircle(ink, eye, androidx.compose.ui.geometry.Offset(w * 0.63f, w * 0.40f))
+                drawArc(
+                    color = ink,
+                    startAngle = 20f, sweepAngle = 140f, useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(w * 0.27f, w * 0.30f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.46f, w * 0.44f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.065f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                 )
             }
         } else {
