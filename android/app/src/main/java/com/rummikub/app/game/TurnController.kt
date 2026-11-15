@@ -208,13 +208,38 @@ class TurnController(
                     melds + MeldSet(tiles = listOf(tile))
                 } else {
                     val m = melds[idx]
-                    val insertAt = target.index.coerceIn(0, m.tiles.size)
-                    melds.toMutableList().also { it[idx] = m.withTileInserted(insertAt, tile) }
+                    val duplicateIndex = duplicateIndexInRun(m, tile)
+                    if (duplicateIndex >= 0) {
+                        // Same colour and number already in this run (e.g. a 6 dropped on 4-5-6-7-8):
+                        // split into 4-5-6 and 6-7-8 instead of building an impossible run.
+                        _messages.tryEmit("Série scindée en deux combinaisons.")
+                        val left = m.tiles.subList(0, duplicateIndex + 1).toList()
+                        val right = listOf(tile) + m.tiles.subList(duplicateIndex + 1, m.tiles.size)
+                        melds.toMutableList().also {
+                            it[idx] = m.copy(tiles = left)
+                            it.add(idx + 1, MeldSet(tiles = right, gridRow = m.gridRow, gridCol = m.gridCol))
+                        }
+                    } else {
+                        val insertAt = target.index.coerceIn(0, m.tiles.size)
+                        melds.toMutableList().also { it[idx] = m.withTileInserted(insertAt, tile) }
+                    }
                 }
             }
         }
 
         commitWorkingState(board.copy(melds = melds), rack.copy(tiles = rackTiles), tileId)
+    }
+
+    /**
+     * If [meld] is a run (one colour, at least two different numbers) that already holds a tile
+     * with the same colour and number as [tile], returns that tile's index, otherwise -1.
+     */
+    private fun duplicateIndexInRun(meld: MeldSet, tile: Tile): Int {
+        if (tile.isJoker) return -1
+        val numbered = meld.tiles.filterNot { it.isJoker }
+        if (numbered.map { it.color }.distinct().size != 1) return -1
+        if (numbered.map { it.number }.distinct().size < 2) return -1
+        return meld.tiles.indexOfFirst { !it.isJoker && it.color == tile.color && it.number == tile.number }
     }
 
     private fun commitWorkingState(board: BoardState, rack: PlayerRack, movedTileId: String) {

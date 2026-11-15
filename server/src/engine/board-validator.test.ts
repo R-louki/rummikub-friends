@@ -81,3 +81,13 @@ test('BoardValidator: invalid group with duplicate color', () => {
   const res = BoardValidator.validateGroup(meld);
   assert.strictEqual(res.isValid, false);
 });
+
+test('BoardValidator: run in shuffled order is invalid', () => {
+  const t = (id: string, n: number): Tile => ({ id, color: 'RED', number: n, isJoker: false });
+  const shuffled: MeldSet = { id: 'm9', gridRow: 0, gridCol: 0, tiles: [t('a', 5), t('b', 3), t('c', 4)] };
+  assert.strictEqual(BoardValidator.validateMeld(shuffled).isValid, false);
+  const sorted: MeldSet = { id: 'm10', gridRow: 0, gridCol: 0, tiles: [t('b', 3), t('c', 4), t('a', 5)] };
+  assert.strictEqual(BoardValidator.validateMeld(sorted).isValid, true);
+  const descending: MeldSet = { id: 'm11', gridRow: 0, gridCol: 0, tiles: [t('a', 5), t('c', 4), t('b', 3)] };
+  assert.strictEqual(BoardValidator.validateMeld(descending).isValid, false);
+});

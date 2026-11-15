@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rummikub.app.game.DropTarget
@@ -69,21 +70,18 @@ fun BoardGrid(
                 shape = RoundedCornerShape(12.dp)
             )
     ) { feltHovered ->
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .then(if (feltHovered) Modifier.background(Color(0x1A00E5FF)) else Modifier)
-                .padding(8.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(6.dp)
         ) {
+            val fit = remember(boardState.melds, maxWidth, maxHeight) {
+                fitTiles(boardState.melds, maxWidth, maxHeight)
+            }
+
             if (boardState.melds.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         text = when {
                             !isMyTurn -> "En attente des coups des joueurs..."
@@ -95,84 +93,102 @@ fun BoardGrid(
                         textAlign = TextAlign.Center
                     )
                 }
-            }
-
-            // Melds laid out in wrapping rows
-            val rows = remember(boardState.melds) { packMeldsIntoRows(boardState.melds, maxTilesPerRow = 12) }
-            rows.forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            } else {
+                // The tile size is chosen so that every meld is visible at once (no scrolling);
+                // scrolling only appears as a last resort when even the smallest size does not fit.
+                val scrollModifier = if (fit.needsScroll) Modifier.verticalScroll(rememberScrollState()) else Modifier
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(scrollModifier),
+                    verticalArrangement = Arrangement.spacedBy(ROW_GAP)
                 ) {
-                    row.forEach { meld ->
-                        key(meld.id) {
-                            MeldGroupContainer(
-                                meld = meld,
-                                isMyTurn = isMyTurn,
-                                hasSelection = hasSelection,
-                                newTileIds = newTileIds,
-                                selectedTileIds = selectedTileIds,
-                                onTileTapped = onTileTapped,
-                                onTileDropped = onTileDropped,
-                                onTargetTapped = onTargetTapped
-                            )
+                    fit.rows.forEach { row ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(MELD_GAP),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            row.forEach { meld ->
+                                key(meld.id) {
+                                    MeldGroupContainer(
+                                        meld = meld,
+                                        isMyTurn = isMyTurn,
+                                        hasSelection = hasSelection,
+                                        newTileIds = newTileIds,
+                                        selectedTileIds = selectedTileIds,
+                                        tileWidth = fit.tileWidth,
+                                        tileHeight = fit.tileHeight,
+                                        edgeWidth = fit.edgeWidth,
+                                        onTileTapped = onTileTapped,
+                                        onTileDropped = onTileDropped,
+                                        onTargetTapped = onTargetTapped
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
-
-            // Hint strip for new melds, only when the table already has melds
-            if (isMyTurn && boardState.melds.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(40.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (hasSelection) Color(0x3300E5FF) else Color(0x14FFFFFF))
-                        .border(
-                            width = 1.dp,
-                            color = if (hasSelection) Color(0xFF00E5FF) else Color(0x44FFFFFF),
-                            shape = RoundedCornerShape(8.dp)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (hasSelection) "➕ Touchez ici (ou la table) pour créer une nouvelle combinaison"
-                        else "➕ Déposez une tuile sur la table libre pour créer une combinaison",
-                        color = if (hasSelection) Color.White else Color(0x99FFFFFF),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-
-            // Extra room at the bottom so the last row is never hidden behind the rack shadow
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
 
-/**
- * Greedy packing of melds into rows so that a row never exceeds [maxTilesPerRow] tiles.
- */
-private fun packMeldsIntoRows(melds: List<MeldSet>, maxTilesPerRow: Int): List<List<MeldSet>> {
+private val MELD_GAP = 10.dp
+private val ROW_GAP = 8.dp
+private const val MIN_TILE_DP = 17
+private const val MAX_TILE_DP = 40
+
+/** Result of the auto-fit: tile size and the melds packed into rows. */
+private class TileFit(
+    val tileWidth: Dp,
+    val tileHeight: Dp,
+    val edgeWidth: Dp,
+    val rows: List<List<MeldSet>>,
+    val needsScroll: Boolean
+)
+
+private fun meldWidth(tileCount: Int, tile: Dp, edge: Dp): Dp =
+    tile * tileCount + edge * 2 + 2.dp * (tileCount + 1) + 7.dp
+
+private fun packRows(melds: List<MeldSet>, availableWidth: Dp, tile: Dp, edge: Dp): List<List<MeldSet>> {
     val rows = ArrayList<MutableList<MeldSet>>()
     var current = ArrayList<MeldSet>()
-    var currentTiles = 0
+    var used = 0.dp
     for (meld in melds) {
-        val cost = meld.tiles.size + 1 // +1 for edge drop zones
-        if (current.isNotEmpty() && currentTiles + cost > maxTilesPerRow) {
+        val w = meldWidth(meld.tiles.size, tile, edge)
+        if (current.isEmpty()) {
+            current += meld
+            used = w
+        } else if (used + MELD_GAP + w > availableWidth) {
             rows += current
             current = ArrayList()
-            currentTiles = 0
+            current += meld
+            used = w
+        } else {
+            current += meld
+            used = used + MELD_GAP + w
         }
-        current += meld
-        currentTiles += cost
     }
     if (current.isNotEmpty()) rows += current
     return rows
+}
+
+/** Picks the biggest tile size for which every meld fits in [maxWidth] x [maxHeight]. */
+private fun fitTiles(melds: List<MeldSet>, maxWidth: Dp, maxHeight: Dp): TileFit {
+    var size = MAX_TILE_DP
+    while (true) {
+        val tile = size.dp
+        val tileH = tile * 1.36f
+        val edge = (tile * 0.4f).coerceIn(9.dp, 18.dp)
+        val rows = packRows(melds, maxWidth, tile, edge)
+        val rowHeight = tileH + 11.dp
+        val totalHeight = rowHeight * rows.size + ROW_GAP * (rows.size - 1).coerceAtLeast(0)
+        if (totalHeight <= maxHeight || size <= MIN_TILE_DP) {
+            return TileFit(tile, tileH, edge, rows, needsScroll = totalHeight > maxHeight)
+        }
+        size -= 1
+    }
 }
 
 @Composable
@@ -182,6 +198,9 @@ fun MeldGroupContainer(
     hasSelection: Boolean,
     newTileIds: Set<String>,
     selectedTileIds: Set<String>,
+    tileWidth: Dp,
+    tileHeight: Dp,
+    edgeWidth: Dp,
     onTileTapped: (Tile) -> Unit,
     onTileDropped: (tileId: String, target: DropTarget) -> Unit,
     onTargetTapped: (target: DropTarget) -> Unit,
@@ -207,6 +226,8 @@ fun MeldGroupContainer(
         EdgeDropZone(
             enabled = isMyTurn,
             highlight = hasSelection,
+            width = edgeWidth,
+            height = tileHeight,
             onDropTile = { id -> onTileDropped(id, DropTarget.MeldPosition(meld.id, 0)) },
             onTap = { onTargetTapped(DropTarget.MeldPosition(meld.id, 0)) }
         )
@@ -229,8 +250,8 @@ fun MeldGroupContainer(
                 ) { hovered ->
                     TileView(
                         tile = tile,
-                        width = 38.dp,
-                        height = 52.dp,
+                        width = tileWidth,
+                        height = tileHeight,
                         isSelected = isSelected,
                         isNewThisTurn = tile.id in newTileIds,
                         isGhost = hovered,
@@ -248,6 +269,8 @@ fun MeldGroupContainer(
         EdgeDropZone(
             enabled = isMyTurn,
             highlight = hasSelection,
+            width = edgeWidth,
+            height = tileHeight,
             onDropTile = { id -> onTileDropped(id, DropTarget.MeldPosition(meld.id, Int.MAX_VALUE)) },
             onTap = { onTargetTapped(DropTarget.MeldPosition(meld.id, Int.MAX_VALUE)) }
         )
@@ -258,6 +281,8 @@ fun MeldGroupContainer(
 private fun EdgeDropZone(
     enabled: Boolean,
     highlight: Boolean,
+    width: Dp,
+    height: Dp,
     onDropTile: (String) -> Unit,
     onTap: () -> Unit
 ) {
@@ -270,8 +295,8 @@ private fun EdgeDropZone(
         onDropTile = onDropTile,
         onTap = onTap,
         modifier = Modifier
-            .width(18.dp)
-            .height(52.dp)
+            .width(width)
+            .height(height)
     ) { hovered ->
         Box(
             modifier = Modifier

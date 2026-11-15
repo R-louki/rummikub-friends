@@ -29,6 +29,10 @@ export class Room {
   private currentTurnNumber: number = 0;
   private readonly deckFactory: DeckFactory;
 
+  /** Running total of each player's points over all the rounds played in this room. */
+  private readonly totalScores = new Map<string, number>();
+  private roundNumber = 0;
+
   boardState: BoardState = {
     versionId: 0,
     melds: [],
@@ -227,6 +231,7 @@ export class Room {
 
     this.players.delete(playerId);
     this.sockets.delete(playerId);
+    this.totalScores.delete(playerId);
 
     let newHostId: string | null = null;
     if (player.isHost) {
@@ -315,6 +320,7 @@ export class Room {
     this.clearTurnTimers();
     this.clearGraceTimers();
     this.status = 'IN_GAME';
+    this.roundNumber++;
     this.deltaHistory = [];
     this.currentTurnNumber = 0;
     this.turnSnapshot = null;
@@ -707,7 +713,9 @@ export class Room {
         scoreDelta: -playerPenalty,
         hadJokerPenalty: hadJoker
       });
+      this.addToTotal(pid, -playerPenalty);
     }
+    this.addToTotal(winnerId, totalLoserPenaltySum);
 
     // Le vainqueur marque la somme positive des pénalités adverses
     scores.push({
@@ -719,11 +727,14 @@ export class Room {
       hadJokerPenalty: false
     });
 
+    for (const sc of scores) sc.totalScore = this.totalScores.get(sc.playerId) ?? 0;
+
     this.broadcast({
       type: 'game_over_evt',
       roomCode: this.roomCode,
       winnerId,
       winnerName: winner.name,
+      roundNumber: this.roundNumber,
       scores
     });
   }
@@ -745,12 +756,14 @@ export class Room {
       roomCode: this.roomCode,
       winnerId: remaining.id,
       winnerName: remaining.name,
+      roundNumber: this.roundNumber,
       scores: [{
         playerId: remaining.id,
         playerName: remaining.name,
         isWinner: true,
         remainingTileCount: remaining.rack.tiles.length,
         scoreDelta: 0,
+        totalScore: this.totalScores.get(remaining.id) ?? 0,
         hadJokerPenalty: false
       }]
     });
@@ -864,6 +877,10 @@ export class Room {
     }
   }
 
+  private addToTotal(playerId: string, delta: number): void {
+    this.totalScores.set(playerId, (this.totalScores.get(playerId) ?? 0) + delta);
+  }
+
   /** Stops every timer; called by the RoomManager before dropping the room. */
   dispose(): void {
     this.clearTurnTimers();
@@ -894,6 +911,7 @@ export class Room {
       isConnected: p.isConnected,
       tileCount: p.rack.tiles.length,
       hasMadeInitialMeld: p.rack.hasMadeInitialMeld,
+      totalScore: this.totalScores.get(p.id) ?? 0,
       isSpeaking: false,
       isMuted: false
     }));

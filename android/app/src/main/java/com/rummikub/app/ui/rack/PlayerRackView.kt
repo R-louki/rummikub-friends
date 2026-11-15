@@ -61,12 +61,12 @@ fun PlayerRackView(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 8.dp, vertical = 5.dp)
+                .padding(horizontal = 8.dp, vertical = 3.dp)
                 .then(
                     if (highlight) Modifier.border(2.dp, Color(0xFF00E5FF), RoundedCornerShape(6.dp))
                     else Modifier
                 ),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             if (rack.tiles.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -119,8 +119,8 @@ private fun RackRow(
             key(tile.id) {
                 TileView(
                     tile = tile,
-                    width = 36.dp,
-                    height = 48.dp,
+                    width = 30.dp,
+                    height = 40.dp,
                     isSelected = tile.id in selectedTileIds,
                     modifier = Modifier.tileDragSource(
                         tileId = tile.id,

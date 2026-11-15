@@ -317,4 +317,34 @@ class BoardValidatorTest {
         assertFalse("Board with an invalid meld must be invalid", result.isValid)
         assertEquals(1, result.invalidMelds.size)
     }
+
+    @Test
+    fun `run laid out in shuffled or descending order is invalid`() {
+        val shuffled = MeldSet(
+            tiles = listOf(
+                Tile.number(TileColor.RED, 5),
+                Tile.number(TileColor.RED, 3),
+                Tile.number(TileColor.RED, 4)
+            )
+        )
+        assertFalse("5-3-4 must be invalid", BoardValidator.validateRun(shuffled).isValid)
+
+        val descending = MeldSet(
+            tiles = listOf(
+                Tile.number(TileColor.RED, 5),
+                Tile.number(TileColor.RED, 4),
+                Tile.number(TileColor.RED, 3)
+            )
+        )
+        assertFalse("5-4-3 must be invalid", BoardValidator.validateRun(descending).isValid)
+
+        val ordered = MeldSet(
+            tiles = listOf(
+                Tile.number(TileColor.RED, 3),
+                Tile.number(TileColor.RED, 4),
+                Tile.number(TileColor.RED, 5)
+            )
+        )
+        assertTrue("3-4-5 must be valid", BoardValidator.validateRun(ordered).isValid)
+    }
 }

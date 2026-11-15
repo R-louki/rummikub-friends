@@ -223,8 +223,19 @@ export class BoardValidator {
       };
     }
 
-    // Unordered span check
+    // The numbered tiles must be laid out in ascending order (Jokers stay flexible):
+    // a shuffled run such as 5-3-4 is not a valid run on the table.
     const sorted = [...nonJokerNums].sort((a, b) => a - b);
+    if (nonJokerNums.some((n, i) => n !== sorted[i])) {
+      return {
+        meldId: meld.id,
+        meldType: 'RUN',
+        isValid: false,
+        errorMessage: `Les tuiles de la série ne sont pas dans l'ordre croissant`,
+        resolvedTiles: [],
+        points: 0
+      };
+    }
     const L = tiles.length;
 
     if (sorted.length === 0) {

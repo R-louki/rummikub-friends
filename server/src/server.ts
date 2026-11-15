@@ -118,6 +118,7 @@ function handlePacket(ws: WebSocket, packet: any): void {
           isConnected: true,
           tileCount: 0,
           hasMadeInitialMeld: false,
+          totalScore: 0,
           isSpeaking: false,
           isMuted: false
         }

@@ -276,3 +276,45 @@ test('RoomManager: heartbeat timeout disconnects once and empty rooms are droppe
     mock.timers.reset();
   }
 });
+
+test('Room: scores accumulate over several rounds', () => {
+  // Alice's 14 tiles: BLACK 1..13 + a Joker, playable as two runs of 7 -> she empties her rack at once.
+  const deckFactory = () => {
+    const all = createStandardDeck(false);
+    const mine = all.filter(t => (t.color === 'BLACK' && t.id.endsWith('_1')) || t.id === 'JOKER_1');
+    const rest = all.filter(t => !mine.includes(t));
+    return [...mine, ...rest];
+  };
+  const room = new Room('TEST10', DEFAULT_GAME_CONFIG, deckFactory);
+  const a = ws();
+  const b = ws();
+  const { player: alice } = room.addPlayer('P1', 'Alice', asWs(a));
+  const { player: bob } = room.addPlayer('P2', 'Bob', asWs(b));
+
+  const playRound = () => {
+    room.startGame();
+    const blacks = alice.rack.tiles.filter(t => t.color === 'BLACK').sort((x, y) => x.number - y.number);
+    const joker = alice.rack.tiles.find(t => t.isJoker)!;
+    const melds: MeldSet[] = [
+      { id: 'r1', gridRow: 0, gridCol: 0, tiles: blacks.slice(0, 7) },
+      { id: 'r2', gridRow: 1, gridCol: 0, tiles: [...blacks.slice(7), joker] }
+    ];
+    room.handleEndTurn('P1', melds, []);
+  };
+
+  playRound();
+  assert.strictEqual(room.status, 'FINISHED');
+  const over1 = a.ofType('game_over_evt')[0];
+  assert.strictEqual(over1.roundNumber, 1);
+  const bobPenalty1 = bob.rack.tiles.reduce((s, t) => s + (t.isJoker ? 30 : t.number), 0);
+  assert.strictEqual(over1.scores.find((s: any) => s.playerId === 'P1').totalScore, bobPenalty1);
+  assert.strictEqual(over1.scores.find((s: any) => s.playerId === 'P2').totalScore, -bobPenalty1);
+
+  playRound();
+  const over2 = a.ofType('game_over_evt')[1];
+  assert.strictEqual(over2.roundNumber, 2);
+  const bobPenalty2 = bob.rack.tiles.reduce((s, t) => s + (t.isJoker ? 30 : t.number), 0);
+  assert.strictEqual(over2.scores.find((s: any) => s.playerId === 'P1').totalScore, bobPenalty1 + bobPenalty2);
+  assert.strictEqual(room.getPlayerSummaries().find(p => p.id === 'P2').totalScore, -(bobPenalty1 + bobPenalty2));
+  room.dispose();
+});

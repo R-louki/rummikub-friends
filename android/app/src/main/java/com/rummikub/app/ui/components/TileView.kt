@@ -91,7 +91,7 @@ fun TileView(
                 )
             )
             .border(borderWidth, borderColor, RoundedCornerShape(6.dp))
-            .padding(2.dp),
+            .padding(1.dp),
         contentAlignment = Alignment.Center
     ) {
         if (tile.isJoker) {
@@ -102,14 +102,14 @@ fun TileView(
                 Text(
                     text = "★",
                     color = tileColor.copy(alpha = alpha),
-                    fontSize = 20.sp,
+                    fontSize = (width.value * 0.48f).sp,
                     fontWeight = FontWeight.Black,
                     textAlign = TextAlign.Center
                 )
                 Text(
                     text = "☺",
                     color = tileColor.copy(alpha = alpha),
-                    fontSize = 12.sp,
+                    fontSize = (width.value * 0.29f).sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
@@ -122,7 +122,7 @@ fun TileView(
                 Text(
                     text = tile.number.toString(),
                     color = tileColor.copy(alpha = alpha),
-                    fontSize = if (tile.number >= 10) 18.sp else 21.sp,
+                    fontSize = (width.value * (if (tile.number >= 10) 0.47f else 0.56f)).sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center
                 )
@@ -130,7 +130,7 @@ fun TileView(
                 if (tile.number == 6 || tile.number == 9) {
                     Box(
                         modifier = Modifier
-                            .width(12.dp)
+                            .width(width * 0.32f)
                             .height(2.dp)
                             .background(tileColor.copy(alpha = alpha), RoundedCornerShape(1.dp))
                     )

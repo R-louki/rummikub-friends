@@ -27,6 +27,7 @@ data class PlayerEndScore(
     val isWinner: Boolean,
     val remainingTileCount: Int,
     val scoreDelta: Int,
+    val totalScore: Int = 0,
     val hadJokerPenalty: Boolean = false
 )
 
@@ -40,6 +41,7 @@ fun VictoryScreen(
     scores: List<PlayerEndScore>,
     winnerName: String,
     isMeWinner: Boolean,
+    roundNumber: Int = 1,
     onPlayAgain: () -> Unit,
     onBackToLobby: () -> Unit
 ) {
@@ -90,13 +92,13 @@ fun VictoryScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "CLASSEMENT OFFICIEL DES SCORES :",
+                        text = "MANCHE $roundNumber · CLASSEMENT CUMULÉ :",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF81C784)
                     )
 
-                    scores.sortedByDescending { it.scoreDelta }.forEachIndexed { index, score ->
+                    scores.sortedByDescending { it.totalScore }.forEachIndexed { index, score ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -137,12 +139,19 @@ fun VictoryScreen(
                                 }
                             }
 
-                            Text(
-                                text = if (score.scoreDelta > 0) "+${score.scoreDelta} pts" else "${score.scoreDelta} pts",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Black,
-                                color = if (score.scoreDelta > 0) Color(0xFF69F0AE) else Color(0xFFFF5252)
-                            )
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "${score.totalScore} pts",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "cette manche : " + (if (score.scoreDelta > 0) "+${score.scoreDelta}" else "${score.scoreDelta}"),
+                                    fontSize = 10.sp,
+                                    color = if (score.scoreDelta > 0) Color(0xFF69F0AE) else Color(0xFFFF8A80)
+                                )
+                            }
                         }
                     }
                 }

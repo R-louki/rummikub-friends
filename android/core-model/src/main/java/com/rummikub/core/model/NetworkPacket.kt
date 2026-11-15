@@ -112,6 +112,7 @@ sealed class NetworkPacket {
         val roomCode: String,
         val winnerId: String,
         val winnerName: String,
+        val roundNumber: Int = 1,
         val scores: List<EndGamePlayerScore>
     ) : NetworkPacket()
 
@@ -291,6 +292,7 @@ data class PlayerSummary(
     val isConnected: Boolean,
     val tileCount: Int,
     val hasMadeInitialMeld: Boolean,
+    val totalScore: Int = 0,
     val isSpeaking: Boolean = false,
     val isMuted: Boolean = false
 )
@@ -305,5 +307,6 @@ data class EndGamePlayerScore(
     val isWinner: Boolean,
     val remainingTileCount: Int,
     val scoreDelta: Int,
+    val totalScore: Int = 0,
     val hadJokerPenalty: Boolean = false
 )

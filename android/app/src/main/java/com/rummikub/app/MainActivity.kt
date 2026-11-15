@@ -98,6 +98,7 @@ class MainActivity : ComponentActivity() {
                 var victoryScores by remember { mutableStateOf<List<PlayerEndScore>>(emptyList()) }
                 var winnerName by remember { mutableStateOf("") }
                 var isMeWinner by remember { mutableStateOf(false) }
+                var roundNumber by remember { mutableStateOf(1) }
 
                 val snackbarHostState = remember { SnackbarHostState() }
 
@@ -125,6 +126,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) {
                     networkRepository.gameOverEvents.collect { evt ->
                         winnerName = evt.winnerName
+                        roundNumber = evt.roundNumber
                         isMeWinner = evt.winnerId == networkRepository.myPlayerId.value
                         victoryScores = evt.scores.map { s ->
                             PlayerEndScore(
@@ -133,6 +135,7 @@ class MainActivity : ComponentActivity() {
                                 isWinner = s.isWinner,
                                 remainingTileCount = s.remainingTileCount,
                                 scoreDelta = s.scoreDelta,
+                                totalScore = s.totalScore,
                                 hadJokerPenalty = s.hadJokerPenalty
                             )
                         }
@@ -237,6 +240,7 @@ class MainActivity : ComponentActivity() {
                                     scores = victoryScores,
                                     winnerName = winnerName,
                                     isMeWinner = isMeWinner,
+                                    roundNumber = roundNumber,
                                     onPlayAgain = {
                                         currentScreen = AppScreen.WAITING_ROOM
                                     },

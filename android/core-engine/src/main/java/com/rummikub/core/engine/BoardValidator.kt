@@ -264,7 +264,16 @@ object BoardValidator {
             )
         }
 
-        // Case B: Check if unordered set can form a legal run (permutation resolution)
+        // Case B: the numbered tiles must be laid out in ascending order (Jokers stay flexible).
+        // A shuffled run such as 5-3-4 is NOT a valid run on the table.
+        if (numbers != numbers.sorted()) {
+            return MeldValidationResult(
+                meldId = meld.id,
+                meldType = MeldType.RUN,
+                isValid = false,
+                errorMessage = "Les tuiles de la série ne sont pas dans l'ordre croissant: $numbers"
+            )
+        }
         val sortedNonJokerNumbers = numbers.sorted()
         val totalLength = tiles.size
 

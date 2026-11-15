@@ -293,7 +293,7 @@ fun GameScreen(
                     onRackTapped = {
                         if (turnController.sendSelectedTo(DropTarget.Rack)) audioController.onTileSnapped()
                     },
-                    modifier = Modifier.height(112.dp)
+                    modifier = Modifier.height(92.dp)
                 )
             }
 
@@ -554,5 +554,13 @@ private fun RibbonPlayer(
             color = if (player.isConnected) Color(0xFFD7CCC8) else StatusReconnecting,
             fontSize = 8.sp
         )
+        if (player.totalScore != 0) {
+            Text(
+                text = "Σ ${player.totalScore} pts",
+                color = if (player.totalScore > 0) Color(0xFF69F0AE) else Color(0xFFFF8A80),
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
