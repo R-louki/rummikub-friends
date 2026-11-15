@@ -106,6 +106,14 @@ sealed class NetworkPacket {
     ) : NetworkPacket()
 
     @Serializable
+    @SerialName("reaction_req")
+    data class ReactionRequest(val emoji: String) : NetworkPacket()
+
+    @Serializable
+    @SerialName("reaction_evt")
+    data class ReactionEvent(val playerId: String, val emoji: String) : NetworkPacket()
+
+    @Serializable
     @SerialName("start_game_req")
     data class StartGameRequest(
         val roomCode: String,

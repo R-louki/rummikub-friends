@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -44,6 +45,7 @@ import com.rummikub.core.model.PlayerSummary
 import com.rummikub.core.network.ConnectionStatus
 import com.rummikub.core.network.GameNetworkRepository
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Game screen, landscape, built for phones:
@@ -77,6 +79,20 @@ fun GameScreen(
     val actionInFlight by networkRepository.actionInFlight.collectAsState()
     val drawnTileId by networkRepository.lastDrawnTileId.collectAsState()
     val canUndo by turnController.canUndo.collectAsState()
+
+    // Floating emoji reactions: (id, playerId, emoji)
+    val floating = remember { mutableStateListOf<Triple<Long, String, String>>() }
+    LaunchedEffect(Unit) {
+        networkRepository.reactions.collect { r ->
+            val id = SystemClock.elapsedRealtime() + floating.size
+            floating.add(Triple(id, r.playerId, r.emoji))
+            launch {
+                delay(2200)
+                floating.removeAll { it.first == id }
+            }
+        }
+    }
+    val reactionScope = rememberCoroutineScope()
 
     // Working (local, in-progress) state of the turn
     val workingBoard by turnController.board.collectAsState()
@@ -244,8 +260,8 @@ fun GameScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 6.dp, start = 12.dp, end = 12.dp)
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 6.dp, start = 12.dp, end = 12.dp)
                                 .background(Color(0x99000000), RoundedCornerShape(12.dp))
                                 .padding(horizontal = 10.dp, vertical = 3.dp)
                         )
@@ -386,6 +402,32 @@ fun GameScreen(
                     }
                 }
 
+                // Quick reactions
+                var reactOpen by remember { mutableStateOf(false) }
+                Box {
+                    RoundAction(glyph = "😀", enabled = true, container = Color(0xFF26140B), size = 38.dp, glyphSize = 18.sp) {
+                        reactOpen = true
+                    }
+                    DropdownMenu(expanded = reactOpen, onDismissRequest = { reactOpen = false }) {
+                        listOf(listOf("👍", "😂", "😮", "😡"), listOf("👏", "🔥", "🤔", "😭")).forEach { line ->
+                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                line.forEach { e ->
+                                    Text(
+                                        e, fontSize = 26.sp,
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .clickable {
+                                                reactOpen = false
+                                                reactionScope.launch { networkRepository.sendReaction(e) }
+                                            }
+                                            .padding(6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Menu: table code, connection quality, sound settings
                 var menuOpen by remember { mutableStateOf(false) }
                 Box {
@@ -431,6 +473,27 @@ fun GameScreen(
                         )
                     }
                 }
+            }
+        }
+
+        // Floating reactions rise next to the avatar of the player who sent them
+        floating.forEach { (id, playerId, emoji) ->
+            val index = players.indexOfFirst { it.id == playerId }.coerceAtLeast(0)
+            key(id) {
+                val rise = remember { androidx.compose.animation.core.Animatable(0f) }
+                LaunchedEffect(Unit) { rise.animateTo(1f, androidx.compose.animation.core.tween(2000)) }
+                Text(
+                    text = emoji,
+                    fontSize = 34.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset(x = 68.dp, y = (30 + index * 96).dp - (50 * rise.value).dp)
+                        .graphicsLayer {
+                            alpha = (1f - rise.value * rise.value)
+                            val sc = 0.6f + 0.6f * minOf(1f, rise.value * 4f)
+                            scaleX = sc; scaleY = sc
+                        }
+                )
             }
         }
 

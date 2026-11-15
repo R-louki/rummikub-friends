@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
         // The volume is preset so the chosen track is audible but soft.
         audioController.setMusicVolume(0.30f)
         val settings = getSharedPreferences("settings", MODE_PRIVATE)
-        com.rummikub.app.ui.theme.ThemeState.select(settings.getInt("theme", 0))
+        com.rummikub.app.ui.theme.ThemeState.select(settings.getInt("theme_v2", 0))
         com.rummikub.app.ui.dnd.DragSettings.level = settings.getInt("drag", 1)
         audioController.voiceChat.setMicSensitivity(settings.getInt("mic", 1))
 
@@ -572,7 +572,7 @@ class MainActivity : ComponentActivity() {
                         com.rummikub.app.ui.dialogs.ThemePickerDialog(
                             onPick = { i ->
                                 com.rummikub.app.ui.theme.ThemeState.select(i)
-                                getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("theme", i).apply()
+                                getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("theme_v2", i).apply()
                             },
                             onDismiss = { showTheme = false }
                         )

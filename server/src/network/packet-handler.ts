@@ -23,6 +23,10 @@ export function createPacketHandler(
 ) {
   const requireAuth = !!options.requireAuth && backend.enabled;
 
+  // Quick reactions (emojis) between players: whitelisted and rate-limited
+  const REACTIONS = ['👍', '😂', '😮', '😡', '👏', '🔥', '🤔', '😭'];
+  const lastReactionAt = new Map<string, number>();
+
   /** The name shown at the table: the account pseudo when logged in, the typed name otherwise. */
   const identityFor = (ws: WebSocket, typedName: string | undefined, fallback: string) => {
     const account = sessions.accountOf(ws);
@@ -279,6 +283,17 @@ export function createPacketHandler(
             intermediateMelds: packet.intermediateMelds
           }, ctx.playerId);
         }
+        break;
+      }
+
+      case 'reaction_req': {
+        const ctx = roomManager.getRoomBySocket(ws);
+        if (!ctx || !REACTIONS.includes(packet.emoji)) break;
+        const key = `${ctx.room.roomCode}:${ctx.playerId}`;
+        const now = Date.now();
+        if (now - (lastReactionAt.get(key) ?? 0) < 600) break;
+        lastReactionAt.set(key, now);
+        ctx.room.broadcast({ type: 'reaction_evt', playerId: ctx.playerId, emoji: packet.emoji });
         break;
       }
 

@@ -206,6 +206,14 @@ class GameNetworkRepository(
         }
     }
 
+    private val _reactions = MutableSharedFlow<NetworkPacket.ReactionEvent>(extraBufferCapacity = 16)
+    /** Emoji reactions sent by the players (me included) at the table. */
+    val reactions: SharedFlow<NetworkPacket.ReactionEvent> = _reactions.asSharedFlow()
+
+    suspend fun sendReaction(emoji: String) {
+        sendOrQueue(NetworkPacket.ReactionRequest(emoji))
+    }
+
     suspend fun startGame(newSession: Boolean = false) {
         val code = _roomCode.value ?: return
         sendOrQueue(NetworkPacket.StartGameRequest(roomCode = code, newSession = newSession))
@@ -641,6 +649,10 @@ class GameNetworkRepository(
                 _playerRack.value = packet.initialRack
                 _players.value = packet.players
                 _gameStartedEvents.emit(packet)
+            }
+
+            is NetworkPacket.ReactionEvent -> {
+                _reactions.tryEmit(packet)
             }
 
             is NetworkPacket.SessionOverEvent -> {

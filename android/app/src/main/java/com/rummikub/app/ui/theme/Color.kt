@@ -11,8 +11,8 @@ class FeltPalette(val name: String, val light: Color, val medium: Color, val dar
 /** Table colour themes, chosen by the player (🎨 Thème). The table, lobby and menus follow it. */
 object ThemeState {
     val palettes = listOf(
-        FeltPalette("Émeraude", Color(0xFF1E7A4C), Color(0xFF14573A), Color(0xFF08301D), Color(0xFF041A10)),
         FeltPalette("Bleu nuit", Color(0xFF2F6FD6), Color(0xFF1A4A9E), Color(0xFF0E2A66), Color(0xFF071638)),
+        FeltPalette("Émeraude", Color(0xFF1E7A4C), Color(0xFF14573A), Color(0xFF08301D), Color(0xFF041A10)),
         FeltPalette("Bordeaux", Color(0xFFA33A4C), Color(0xFF6E1F33), Color(0xFF3E0F1D), Color(0xFF22070F)),
         FeltPalette("Violet", Color(0xFF6A4FB8), Color(0xFF45308A), Color(0xFF261A55), Color(0xFF130C30)),
         FeltPalette("Ardoise", Color(0xFF4C6272), Color(0xFF33444F), Color(0xFF1E2A33), Color(0xFF10171D))

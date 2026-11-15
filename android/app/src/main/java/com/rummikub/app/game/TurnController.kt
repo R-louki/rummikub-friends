@@ -276,6 +276,10 @@ class TurnController(
                 val idx = melds.indexOfFirst { it.id == target.meldId }
                 melds = if (idx < 0) {
                     melds + MeldSet(tiles = listOf(tile))
+                } else if (!fitsMeld(melds[idx], tile)) {
+                    // Poka-yoke: a tile that cannot belong to this combination is never forced into it
+                    _messages.tryEmit("Cette tuile ne va pas avec cette combinaison : posée à part.")
+                    melds + MeldSet(tiles = listOf(tile))
                 } else {
                     val m = melds[idx]
                     val duplicateIndex = duplicateIndexInRun(m, tile)
@@ -298,6 +302,35 @@ class TurnController(
         }
 
         commitWorkingState(board.copy(melds = melds), rack.copy(tiles = rackTiles), tileId)
+    }
+
+    /**
+     * Can [tile] sensibly belong to [meld]? Group: same number, a colour not yet used, at most 4 tiles.
+     * Run: same colour and a number next to (or inside) the run. A lone tile accepts the same number or colour.
+     * Combinations that are already inconsistent are left alone.
+     */
+    private fun fitsMeld(meld: MeldSet, tile: Tile): Boolean {
+        if (tile.isJoker) return meld.tiles.size < 13
+        val numbered = meld.tiles.filterNot { it.isJoker }
+        if (numbered.isEmpty()) return true
+        if (numbered.size == 1) {
+            val only = numbered[0]
+            val sameNumber = tile.number == only.number && tile.color != only.color
+            val sameColour = tile.color == only.color && tile.number != only.number
+            return (sameNumber && meld.tiles.size < 4) || sameColour
+        }
+        val numbers = numbered.map { it.number }
+        if (numbers.distinct().size == 1) { // group
+            return tile.number == numbers[0] && numbered.none { it.color == tile.color } && meld.tiles.size < 4
+        }
+        if (numbered.map { it.color }.distinct().size == 1) { // run
+            if (tile.color != numbered[0].color) return false
+            val firstIndex = meld.tiles.indexOfFirst { !it.isJoker }
+            val start = numbered[0].number - firstIndex
+            val end = start + meld.tiles.size - 1
+            return tile.number in (start - 1)..(end + 1)
+        }
+        return true
     }
 
     /**
