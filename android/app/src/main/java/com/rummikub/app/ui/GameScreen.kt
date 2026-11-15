@@ -262,12 +262,10 @@ fun GameScreen(
                         onTileTapped = { tile -> turnController.toggleSelection(tile.id) },
                         onTileDropped = { tileId, target ->
                             turnController.dropTile(tileId, target)
-                            audioController.onTileSnapped()
                         },
                         onTargetTapped = { target ->
                             if (turnController.sendSelectedTo(target)) {
                                 view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                audioController.onTileSnapped()
                             }
                         },
                         onSelectChain = { ids ->
@@ -322,12 +320,11 @@ fun GameScreen(
                     isMyTurn = isMyTurn,
                     selectedTileIds = selectedTileIds,
                     onTileTapped = { tile ->
-                        audioController.onTileGrabbed()
                         turnController.toggleSelection(tile.id)
                     },
                     onTileDroppedOnRack = { tileId -> turnController.dropTile(tileId, DropTarget.Rack) },
                     onRackTapped = {
-                        if (turnController.sendSelectedTo(DropTarget.Rack)) audioController.onTileSnapped()
+                        turnController.sendSelectedTo(DropTarget.Rack)
                     }
                 )
             }

@@ -57,7 +57,6 @@ fun TileView(
         animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 520f),
         label = "tile_scale"
     )
-    // A selected tile also rises a little, like a tile picked up from the table
     val lift by animateFloatAsState(
         targetValue = if (lifted) -7f else 0f,
         animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 520f),
@@ -90,9 +89,6 @@ fun TileView(
     }
     val borderWidth = if (isSelected || isNewThisTurn || isPlacedByOpponent || isMovedByOpponent) 3.dp else 1.dp
 
-    // The tile has a visible thickness: a darker edge under the face, and a shadow on the table
-    val thickness = (height.value * 0.075f).dp.coerceAtLeast(3.dp)
-    val shape = RoundedCornerShape(7.dp)
     Box(
         modifier = modifier
             .size(width = width, height = height)
@@ -101,28 +97,26 @@ fun TileView(
                 scaleY = scale
                 translationY = lift * density
             }
+            .shadow(elevation.dp, shape = RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(6.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(TileIvoryBevel, TileIvorySurface, TileIvoryShadow)
+                )
+            )
+            .border(borderWidth, borderColor, RoundedCornerShape(6.dp))
+            .padding(1.dp),
+        contentAlignment = Alignment.Center
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .shadow(elevation.dp, shape)
-                .clip(shape)
-                .background(Brush.verticalGradient(listOf(Color(0xFFD9CFB6), Color(0xFF8E8369))))
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(height - thickness)
-                .clip(RoundedCornerShape(6.dp))
+                .size(width * 0.80f)
                 .background(
-                    Brush.verticalGradient(
-                        colors = listOf(TileIvoryBevel, TileIvorySurface, TileIvoryShadow)
-                    )
+                    Brush.radialGradient(listOf(Color(0xFFFFFFFF), Color(0xFFEFEBDD), Color(0xFFE3DECD))),
+                    androidx.compose.foundation.shape.CircleShape
                 )
-                .border(borderWidth, borderColor, RoundedCornerShape(6.dp))
-                .padding(1.dp),
-            contentAlignment = Alignment.Center
-        ) {
+                .border(0.8.dp, Color(0x1F000000), androidx.compose.foundation.shape.CircleShape)
+        )
         if (tile.isJoker) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -150,7 +144,6 @@ fun TileView(
             ) {
                 Text(
                     text = tile.number.toString(),
-                    style = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color(0x55000000), androidx.compose.ui.geometry.Offset(1.5f, 2.5f), 3f)),
                     color = tileColor.copy(alpha = alpha),
                     fontSize = (width.value * (if (tile.number >= 10) 0.47f else 0.56f)).sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -167,6 +160,5 @@ fun TileView(
                 }
             }
         }
-    }
     }
 }
