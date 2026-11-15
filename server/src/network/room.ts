@@ -802,7 +802,7 @@ export class Room {
         const id = t?.id;
         if (typeof id !== 'string') return { ok: false, reason: 'Tuile sans identifiant.' };
         const canonical = known.get(id);
-        if (!canonical) return { ok: false, reason: `Tuile inconnue sur la table (${id}).` };
+        if (!canonical) return { ok: false, reason: "Votre plateau n'est plus synchronisé avec la table. Appuyez sur Annuler puis réessayez." };
         if (!expected.has(id)) return { ok: false, reason: `La tuile ${id} est encore sur votre chevalet.` };
         if (seen.has(id)) return { ok: false, reason: `La tuile ${id} apparaît deux fois.` };
         seen.add(id);

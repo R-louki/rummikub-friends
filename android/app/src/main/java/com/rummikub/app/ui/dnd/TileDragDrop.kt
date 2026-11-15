@@ -6,6 +6,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.draganddrop.dragAndDropSource
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -42,10 +44,36 @@ fun DragAndDropEvent.tileId(): String? {
 fun Modifier.tileDragSource(
     tileId: String,
     enabled: Boolean,
+    immediateDrag: Boolean = false,
     onTap: () -> Unit
 ): Modifier {
     val currentOnTap by rememberUpdatedState(onTap)
     if (!enabled) return this
+    if (immediateDrag) {
+        // Rack tiles: the tile follows the finger as soon as it moves (no long press needed)
+        return this.dragAndDropSource {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                var dragged = false
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!change.pressed) {
+                        if (!dragged) currentOnTap()
+                        break
+                    }
+                    val moved = change.position - down.position
+                    if (!dragged && moved.getDistance() > viewConfiguration.touchSlop) {
+                        dragged = true
+                        startTransfer(
+                            DragAndDropTransferData(clipData = ClipData.newPlainText(TILE_CLIP_LABEL, tileId))
+                        )
+                        break
+                    }
+                }
+            }
+        }
+    }
     return this.dragAndDropSource {
         detectTapGestures(
             onTap = { currentOnTap() },

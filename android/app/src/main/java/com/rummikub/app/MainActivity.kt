@@ -287,8 +287,8 @@ class MainActivity : ComponentActivity() {
                         busyMessage = null
                         snackbarHostState.showSnackbar(
                             message = message,
-                            withDismissAction = true,
-                            duration = SnackbarDuration.Long
+                            withDismissAction = false,
+                            duration = SnackbarDuration.Short
                         )
                     }
                 }
@@ -296,7 +296,7 @@ class MainActivity : ComponentActivity() {
                 // Account messages (sign-in problems, friend requests...)
                 LaunchedEffect(Unit) {
                     accounts.messages.collect { message ->
-                        snackbarHostState.showSnackbar(message = message, withDismissAction = true, duration = SnackbarDuration.Long)
+                        snackbarHostState.showSnackbar(message = message, withDismissAction = false, duration = SnackbarDuration.Short)
                     }
                 }
 
@@ -328,7 +328,7 @@ class MainActivity : ComponentActivity() {
                     turnController.messages.collect { message ->
                         snackbarHostState.showSnackbar(
                             message = message,
-                            withDismissAction = true,
+                            withDismissAction = false,
                             duration = SnackbarDuration.Short
                         )
                     }
@@ -349,7 +349,7 @@ class MainActivity : ComponentActivity() {
                         if (isMine) audioController.onTurnRollback()
                         snackbarHostState.showSnackbar(
                             message = message,
-                            withDismissAction = true,
+                            withDismissAction = false,
                             duration = SnackbarDuration.Long
                         )
                     }
@@ -572,9 +572,9 @@ class MainActivity : ComponentActivity() {
                     SnackbarHost(
                         hostState = snackbarHostState,
                         modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 8.dp)
-                    )
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 108.dp)
+                    ) { data -> com.rummikub.app.ui.components.ToastBanner(data.visuals.message) { data.dismiss() } }
                 }
             }
         }

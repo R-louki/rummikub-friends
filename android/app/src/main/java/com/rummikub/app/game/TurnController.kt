@@ -108,6 +108,7 @@ class TurnController(
                     _board.value = server
                     _selectedTileIds.value = emptyList()
                 }
+                dropStaleWork()
             }
         }
         scope.launch {
@@ -122,7 +123,23 @@ class TurnController(
                 snapshotRack = server.copy(tiles = merged)
                 _rack.value = snapshotRack
                 _selectedTileIds.value = emptyList()
+                dropStaleWork()
             }
+        }
+    }
+
+    /**
+     * The in-progress arrangement may only contain tiles of the start-of-turn table and rack.
+     * Anything else is left over from another game or round (new deal, restart): throw it away so
+     * Valider never sends tiles the server does not know.
+     */
+    private fun dropStaleWork() {
+        val allowed = snapshotBoard.allTileIds + snapshotRack.tiles.map { it.id }
+        val working = _board.value.allTileIds + _rack.value.tiles.map { it.id }
+        if (!allowed.containsAll(working)) {
+            _board.value = snapshotBoard
+            _rack.value = snapshotRack
+            _selectedTileIds.value = emptyList()
         }
     }
 

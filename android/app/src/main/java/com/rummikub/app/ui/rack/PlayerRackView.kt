@@ -175,6 +175,7 @@ private fun RackSlot(
                         modifier = Modifier.tileDragSource(
                             tileId = tile.id,
                             enabled = true, // the rack can always be rearranged, even outside my turn
+                            immediateDrag = true,
                             onTap = { if (isMyTurn) onTileTapped(tile) }
                         )
                     )

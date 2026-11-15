@@ -138,9 +138,9 @@ fun BoardGrid(
     }
 }
 
-private val MELD_GAP = 10.dp
-private val ROW_GAP = 8.dp
-private const val MIN_TILE_DP = 17
+private val MELD_GAP = 7.dp
+private val ROW_GAP = 6.dp
+private const val MIN_TILE_DP = 27 // below this the table scrolls instead of shrinking the tiles
 private const val MAX_TILE_DP = 40
 
 /** Result of the auto-fit: tile size and the melds packed into rows. */
@@ -184,7 +184,7 @@ private fun fitTiles(melds: List<MeldSet>, maxWidth: Dp, maxHeight: Dp): TileFit
     while (true) {
         val tile = size.dp
         val tileH = tile * 1.36f
-        val edge = (tile * 0.4f).coerceIn(9.dp, 18.dp)
+        val edge = (tile * 0.3f).coerceIn(8.dp, 14.dp)
         val rows = packRows(melds, maxWidth, tile, edge)
         val rowHeight = tileH + 11.dp
         val totalHeight = rowHeight * rows.size + ROW_GAP * (rows.size - 1).coerceAtLeast(0)
