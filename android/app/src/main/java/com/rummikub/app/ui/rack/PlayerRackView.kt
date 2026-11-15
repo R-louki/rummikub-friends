@@ -68,7 +68,23 @@ fun PlayerRackView(
 
     /** A tile dropped on a slot: move/swap inside the rack, or bring a board tile back there. */
     fun dropOnSlot(tileId: String, slot: Int) {
-        if (tileId in rackIds) {
+        val batch = if (tileId in selectedTileIds && selectedTileIds.size > 1) {
+            selectedTileIds.filter { it in rackIds }
+        } else emptyList()
+        if (tileId in rackIds && batch.size > 1) {
+            // Several selected tiles: lay them out from the target slot to the right (then the next row)
+            val moving = batch.toSet()
+            val used = placement.filterKeys { it !in moving }.values.toHashSet()
+            val startRow = slot / ROW_STRIDE
+            val startCol = slot % ROW_STRIDE
+            val candidates = (startRow..1).flatMap { r ->
+                ((if (r == startRow) startCol else 0) until columns).map { c -> r * ROW_STRIDE + c }
+            } + (0..startRow).flatMap { r ->
+                (0 until (if (r == startRow) startCol else columns)).map { c -> r * ROW_STRIDE + c }
+            }
+            val free = candidates.filter { it !in used }.iterator()
+            batch.forEach { id -> if (free.hasNext()) slots[id] = free.next() }
+        } else if (tileId in rackIds) {
             val occupant = tileAtSlot[slot]
             val oldSlot = placement[tileId]
             if (occupant != null && occupant.id != tileId && oldSlot != null) slots[occupant.id] = oldSlot

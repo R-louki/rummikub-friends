@@ -168,6 +168,15 @@ class TurnController(
     // TILE MOVES
     // ==========================================
 
+    /**
+     * A tile was dragged and dropped. If it is part of a multi-tile selection, the whole selection
+     * travels with it (in selection order), otherwise only that tile moves.
+     */
+    fun dropTile(tileId: String, target: DropTarget) {
+        val selected = _selectedTileIds.value
+        if (tileId in selected && selected.size > 1) moveTiles(selected, target) else moveTile(tileId, target)
+    }
+
     /** Moves several tiles as a block: together into one new meld, or one after another into a meld. */
     fun moveTiles(tileIds: List<String>, target: DropTarget) {
         if (tileIds.isEmpty()) return

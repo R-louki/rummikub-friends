@@ -276,7 +276,7 @@ fun GameScreen(
                     initialMeldThreshold = if (hasMadeInitialMeld) 0 else gameConfig.initialMeldThreshold,
                     onTileTapped = { tile -> turnController.toggleSelection(tile.id) },
                     onTileDropped = { tileId, target ->
-                        turnController.moveTile(tileId, target)
+                        turnController.dropTile(tileId, target)
                         audioController.onTileSnapped()
                     },
                     onTargetTapped = { target ->
@@ -303,7 +303,7 @@ fun GameScreen(
                         audioController.onTileGrabbed()
                         turnController.toggleSelection(tile.id)
                     },
-                    onTileDroppedOnRack = { tileId -> turnController.moveTile(tileId, DropTarget.Rack) },
+                    onTileDroppedOnRack = { tileId -> turnController.dropTile(tileId, DropTarget.Rack) },
                     onRackTapped = {
                         if (turnController.sendSelectedTo(DropTarget.Rack)) audioController.onTileSnapped()
                     },
