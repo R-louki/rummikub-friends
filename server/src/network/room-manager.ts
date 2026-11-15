@@ -1,21 +1,90 @@
 import { WebSocket } from 'ws';
 import { GameConfig } from '../models/types.js';
 import { Room } from './room.js';
+import { RoomPersistence } from './room-store.js';
 
 /** A client pings every 3 s; we tolerate several missed pings (app in background, weak signal). */
 const HEARTBEAT_TIMEOUT_MS = 20_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
-/** A room whose players are all offline is dropped after this delay. */
+/** A lobby whose players are all offline is dropped after this delay. */
 const EMPTY_ROOM_TTL_MS = 5 * 60_000;
+/** A game in progress is kept longer: players may be away for a restart or a bad network. */
+const EMPTY_GAME_TTL_MS = 20 * 60_000;
+/** Saves are grouped: one write per table at most every this many ms. */
+const SAVE_DEBOUNCE_MS = 400;
 
 export class RoomManager {
   private rooms = new Map<string, Room>();
   private socketToRoom = new Map<WebSocket, { roomCode: string; playerId: string }>();
   private emptyRoomTimers = new Map<string, NodeJS.Timeout>();
 
-  constructor() {
+  private saveTimers = new Map<string, NodeJS.Timeout>();
+
+  constructor(private readonly store: RoomPersistence | null = null) {
     // Heartbeat supervisor (unref'd to not hold event loop)
     setInterval(() => this.superviseHeartbeats(), HEARTBEAT_CHECK_INTERVAL_MS).unref();
+  }
+
+  // ==========================================
+  // PERSISTENCE (survive restarts / redeploys)
+  // ==========================================
+
+  private watch(room: Room): void {
+    room.onChange = () => this.scheduleSave(room);
+  }
+
+  private scheduleSave(room: Room): void {
+    if (!this.store?.enabled) return;
+    if (this.saveTimers.has(room.roomCode)) return;
+    const timer = setTimeout(() => {
+      this.saveTimers.delete(room.roomCode);
+      void this.saveNow(room);
+    }, SAVE_DEBOUNCE_MS);
+    timer.unref?.();
+    this.saveTimers.set(room.roomCode, timer);
+  }
+
+  private async saveNow(room: Room): Promise<void> {
+    if (!this.store?.enabled) return;
+    // Lobbies are cheap to recreate; only games (running or between rounds) are worth saving.
+    if (room.status === 'LOBBY' || room.isEmpty || !this.rooms.has(room.roomCode)) return;
+    try {
+      await this.store.save(room.roomCode, room.toSnapshot());
+    } catch (err: any) {
+      console.error(`[RoomManager] Sauvegarde du salon ${room.roomCode} impossible: ${err?.message}`);
+    }
+  }
+
+  /** Writes every table right now (called when the server is asked to stop). */
+  async flushAll(): Promise<void> {
+    for (const timer of this.saveTimers.values()) clearTimeout(timer);
+    this.saveTimers.clear();
+    await Promise.all(Array.from(this.rooms.values()).map(r => this.saveNow(r)));
+  }
+
+  /** Loads the tables saved before the last stop. Must finish before the server accepts connections. */
+  async restore(): Promise<number> {
+    if (!this.store?.enabled) return 0;
+    let restored = 0;
+    try {
+      const rows = await this.store.loadAll();
+      for (const row of rows) {
+        try {
+          const room = Room.fromSnapshot(row.state);
+          if (room.isEmpty || room.status === 'LOBBY') continue;
+          this.rooms.set(room.roomCode, room);
+          this.watch(room);
+          this.scheduleEmptyRoomDeletion(room, EMPTY_GAME_TTL_MS);
+          restored++;
+        } catch (err: any) {
+          console.error(`[RoomManager] Salon ${row.room_code} illisible, ignoré: ${err?.message}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[RoomManager] Restauration impossible: ${err?.message}`);
+    }
+    console.log(`[RoomManager] ${restored} salon(s) restauré(s)`);
+    return restored;
   }
 
   get roomCount(): number {
@@ -33,6 +102,7 @@ export class RoomManager {
     const effectiveConfig = botCount > 0 && config ? { ...config, botCount, maxPlayers: botCount + 1 } : config;
     const room = new Room(roomCode, effectiveConfig);
     this.rooms.set(roomCode, room);
+    this.watch(room);
 
     const playerId = 'P_' + Math.random().toString(36).substring(2, 9);
     const { sessionToken } = room.addPlayer(playerId, hostName, socket);
@@ -170,17 +240,22 @@ export class RoomManager {
       this.deleteRoom(room.roomCode, 'vide');
       return;
     }
-    if (room.allDisconnected && !this.emptyRoomTimers.has(room.roomCode)) {
-      const timer = setTimeout(() => {
-        const current = this.rooms.get(room.roomCode);
-        if (current && current.allDisconnected) {
-          this.deleteRoom(room.roomCode, 'tous les joueurs hors-ligne depuis 5 min');
-        }
-        this.emptyRoomTimers.delete(room.roomCode);
-      }, EMPTY_ROOM_TTL_MS);
-      timer.unref?.();
-      this.emptyRoomTimers.set(room.roomCode, timer);
+    if (room.allDisconnected) {
+      this.scheduleEmptyRoomDeletion(room, room.status === 'LOBBY' ? EMPTY_ROOM_TTL_MS : EMPTY_GAME_TTL_MS);
     }
+  }
+
+  private scheduleEmptyRoomDeletion(room: Room, ttlMs: number): void {
+    if (this.emptyRoomTimers.has(room.roomCode)) return;
+    const timer = setTimeout(() => {
+      const current = this.rooms.get(room.roomCode);
+      if (current && current.allDisconnected) {
+        this.deleteRoom(room.roomCode, `tous les joueurs hors-ligne depuis ${Math.round(ttlMs / 60000)} min`);
+      }
+      this.emptyRoomTimers.delete(room.roomCode);
+    }, ttlMs);
+    timer.unref?.();
+    this.emptyRoomTimers.set(room.roomCode, timer);
   }
 
   private cancelEmptyRoomTimer(roomCode: string): void {
@@ -197,6 +272,11 @@ export class RoomManager {
     room.dispose();
     this.rooms.delete(roomCode);
     this.cancelEmptyRoomTimer(roomCode);
+    const pending = this.saveTimers.get(roomCode);
+    if (pending) { clearTimeout(pending); this.saveTimers.delete(roomCode); }
+    if (this.store?.enabled) {
+      this.store.remove(roomCode).catch((err: any) => console.error(`[RoomManager] Suppression distante impossible: ${err?.message}`));
+    }
     console.log(`[RoomManager] Salon ${roomCode} supprimé (${why}).`);
   }
 

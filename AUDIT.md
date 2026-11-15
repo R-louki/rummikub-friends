@@ -135,3 +135,10 @@ Android :
 2. **Serveur (P1)** : points 5 à 9, petits correctifs ciblés avec tests.
 3. **Connexion (P3)** : timeout et retours visuels.
 4. **Audio/voix (P2)** : soit implémenter réellement (ExoPlayer, WebRTC), soit retirer ces options de l'interface tant qu'elles ne sont pas prêtes.
+
+## Sauvegarde des parties (15 novembre 2026)
+
+- Projet Supabase dédié `rummikub-friends` (id `wanqpgxhyoybrpbzsjgu`, région eu-central-1, palier gratuit). Table `public.rooms` (room_code, state jsonb, updated_at), sécurité RLS activée sans aucune politique : seul le serveur, avec la clé secrète, peut lire ou écrire.
+- Le serveur enregistre l'état de chaque table en cours à chaque tour (écritures regroupées sur 400 ms), à l'arrêt (SIGTERM envoyé par Render lors d'un redéploiement) et supprime la ligne quand la table disparaît. Les lobbys ne sont pas sauvegardés.
+- Au démarrage, les tables sauvegardées depuis moins de 24 h sont restaurées AVANT d'accepter les connexions. Les joueurs se reconnectent avec leur jeton de session, la partie reprend, les robots rejouent seuls.
+- Activation : variables d'environnement Render `SUPABASE_URL` (https://wanqpgxhyoybrpbzsjgu.supabase.co) et `SUPABASE_SERVICE_KEY` (clé secrète du projet, jamais dans le dépôt). Sans elles la sauvegarde est simplement désactivée.

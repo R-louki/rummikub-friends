@@ -16,6 +16,25 @@ import crypto from 'node:crypto';
 
 export type DeckFactory = () => Tile[];
 
+/** Everything needed to rebuild a table after a server restart. Plain JSON. */
+export interface RoomSnapshot {
+  version: 1;
+  roomCode: string;
+  config: GameConfig;
+  status: RoomStatus;
+  players: ServerPlayer[];
+  deck: Tile[];
+  turnOrder: string[];
+  activePlayerIndex: number;
+  currentTurnNumber: number;
+  boardState: BoardState;
+  turnSnapshot: { board: BoardState; rack: PlayerRack; turnNumber: number } | null;
+  totalScores: Array<[string, number]>;
+  roundNumber: number;
+  consecutivePasses: number;
+  turnRemainingMs: number;
+}
+
 export class Room {
   readonly roomCode: string;
   config: GameConfig;
@@ -58,6 +77,10 @@ export class Room {
   // Timers
   private turnRemainingMs: number = 0;
   private turnTickInterval: NodeJS.Timeout | null = null;
+
+  /** Called whenever the persistent state of the table changed (the manager saves it). */
+  onChange: (() => void) | null = null;
+  private changed(): void { this.onChange?.(); }
 
   private botTimer: NodeJS.Timeout | null = null;
   /** Delay before a computer player acts, so humans can follow what it does. */
@@ -130,6 +153,56 @@ export class Room {
     this.sockets.set(id, socket);
 
     return { player, sessionToken };
+  }
+
+  /** Serializable copy of the table: used to survive server restarts. */
+  toSnapshot(): RoomSnapshot {
+    return JSON.parse(JSON.stringify({
+      version: 1,
+      roomCode: this.roomCode,
+      config: this.config,
+      status: this.status,
+      players: Array.from(this.players.values()),
+      deck: this.deck,
+      turnOrder: this.turnOrder,
+      activePlayerIndex: this.activePlayerIndex,
+      currentTurnNumber: this.currentTurnNumber,
+      boardState: this.boardState,
+      turnSnapshot: this.turnSnapshot,
+      totalScores: Array.from(this.totalScores.entries()),
+      roundNumber: this.roundNumber,
+      consecutivePasses: this.consecutivePasses,
+      turnRemainingMs: this.turnRemainingMs
+    }));
+  }
+
+  /**
+   * Rebuilds a table from a snapshot. Every human is offline (nobody is connected after a restart),
+   * the game is paused and resumes as soon as someone reconnects with his session token.
+   */
+  static fromSnapshot(snap: RoomSnapshot, deckFactory?: DeckFactory): Room {
+    const room = new Room(snap.roomCode, snap.config, deckFactory);
+    room.status = snap.status;
+    room.deck = snap.deck;
+    room.turnOrder = snap.turnOrder;
+    room.activePlayerIndex = snap.activePlayerIndex;
+    room.currentTurnNumber = snap.currentTurnNumber;
+    room.boardState = { ...snap.boardState, isGracePeriod: false, disconnectedPlayerId: null };
+    room.turnSnapshot = snap.turnSnapshot;
+    room.roundNumber = snap.roundNumber;
+    room.consecutivePasses = snap.consecutivePasses;
+    room.turnRemainingMs = snap.turnRemainingMs > 0 ? snap.turnRemainingMs : snap.config.turnDurationSeconds * 1000;
+    for (const [id, score] of snap.totalScores) room.totalScores.set(id, score);
+    for (const p of snap.players) {
+      const online = !!p.isBot;
+      room.players.set(p.id, {
+        ...p,
+        isConnected: online,
+        rack: { ...p.rack, isConnected: online },
+        lastHeartbeatTime: Date.now()
+      });
+    }
+    return room;
   }
 
   /** Adds computer players (names are fixed, ids start with BOT_). */
@@ -288,6 +361,7 @@ export class Room {
       playerId,
       newHostId
     });
+    this.changed();
   }
 
   reconnectPlayer(
@@ -351,6 +425,7 @@ export class Room {
     if (!active) return;
     if (active.isConnected) {
       this.resumeTurnTimer();
+      if (active.isBot) this.scheduleBotTurn(activeId);
     } else {
       this.startGracePeriod(activeId);
     }
@@ -415,6 +490,7 @@ export class Room {
 
   private startPlayerTurn(playerId: string): void {
     this.clearTurnTimers();
+    this.changed();
     this.currentTurnNumber++;
 
     const player = this.players.get(playerId)!;
@@ -872,6 +948,7 @@ export class Room {
       roundNumber: this.roundNumber,
       scores
     });
+    this.changed();
   }
 
   /** Everyone else left: the last player standing wins the round with 0 points. */

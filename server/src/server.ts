@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import { RoomManager } from './network/room-manager.js';
+import { RoomStore } from './network/room-store.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 
@@ -36,7 +37,9 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server });
-const roomManager = new RoomManager();
+const roomStore = new RoomStore();
+const roomManager = new RoomManager(roomStore);
+console.log(`[Rummikub Server] Persistance des parties: ${roomStore.enabled ? 'activée (Supabase)' : 'désactivée'}`);
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('[WebSocket] Nouvelle connexion entrante');
@@ -242,6 +245,23 @@ function handlePacket(ws: WebSocket, packet: any): void {
   }
 }
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Rummikub Server] Serveur WebSocket autoritaire démarré sur le port ${PORT}`);
+// Restore saved tables BEFORE accepting connections, so reconnecting players find their game.
+roomManager.restore().finally(() => {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Rummikub Server] Serveur WebSocket autoritaire démarré sur le port ${PORT}`);
+  });
 });
+
+// Render stops the old instance with SIGTERM on a redeploy: write every table before leaving.
+let stopping = false;
+const shutdown = async (signal: string) => {
+  if (stopping) return;
+  stopping = true;
+  console.log(`[Rummikub Server] ${signal} reçu: sauvegarde des parties...`);
+  try {
+    await Promise.race([roomManager.flushAll(), new Promise(r => setTimeout(r, 8000))]);
+  } catch { /* nothing more to do */ }
+  process.exit(0);
+};
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
