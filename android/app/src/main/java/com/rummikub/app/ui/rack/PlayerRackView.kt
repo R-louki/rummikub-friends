@@ -2,6 +2,7 @@ package com.rummikub.app.ui.rack
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +42,8 @@ private val SlotHeight = 40.dp
 fun PlayerRackView(
     rack: PlayerRack,
     layoutEpoch: Int,
+    collapsed: Boolean,
+    onToggleCollapsed: () -> Unit,
     isMyTurn: Boolean,
     selectedTileIds: Set<String>,
     onTileTapped: (Tile) -> Unit,
@@ -106,6 +109,37 @@ fun PlayerRackView(
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Chevalet vide", color = Color(0x88FFFFFF), fontSize = 11.sp)
                 }
+            } else if (collapsed) {
+                // Folded rack: every tile on one row, in the order of the slots
+                val ordered = rack.tiles.sortedBy { placement[it.id] ?: Int.MAX_VALUE }
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0x33000000))
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ordered.forEach { tile ->
+                        key(tile.id) {
+                            TileView(
+                                tile = tile,
+                                width = SlotWidth,
+                                height = SlotHeight,
+                                isSelected = tile.id in selectedTileIds,
+                                modifier = Modifier.tileDragSource(
+                                    tileId = tile.id,
+                                    enabled = true,
+                                    immediateDrag = true,
+                                    onTap = { if (isMyTurn) onTileTapped(tile) }
+                                )
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(34.dp))
+                }
             } else {
                 Column(
                     modifier = Modifier
@@ -140,6 +174,17 @@ fun PlayerRackView(
                 }
             }
         }
+        // Fold / unfold the rack
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 2.dp, end = 2.dp)
+                .size(26.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(Color(0xCC1B0E09))
+                .clickable(onClick = onToggleCollapsed),
+            contentAlignment = Alignment.Center
+        ) { Text(if (collapsed) "▴" else "▾", color = Color(0xFFFFCC80), fontSize = 14.sp) }
     }
 }
 

@@ -75,11 +75,11 @@ private fun Preview(screen: String) {
             onlineFriendIds = setOf("u-karim"), lastSeen = sampleSeen, invitedIds = setOf(),
             signedIn = screen == "waiting", onInviteFriend = {}
         )
-        "rack" -> {
+        "rack", "rack_folded" -> {
             val tiles = (1..14).map { Tile(id = "t$it", color = TileColor.values()[it % 4], number = (it % 13) + 1) }
             androidx.compose.foundation.layout.Box(Modifier.background(Color(0xFF0C2B18)).padding(top = 120.dp)) {
                 com.rummikub.app.ui.rack.PlayerRackView(
-                    rack = com.rummikub.core.model.PlayerRack(playerId = "p1", tiles = tiles), layoutEpoch = 0, isMyTurn = true,
+                    rack = com.rummikub.core.model.PlayerRack(playerId = "p1", tiles = tiles), layoutEpoch = 0, collapsed = screen == "rack_folded", onToggleCollapsed = {}, isMyTurn = true,
                     selectedTileIds = emptySet(), onTileTapped = {}, onTileDroppedOnRack = {}, onRackTapped = {},
                     modifier = Modifier.height(92.dp)
                 )

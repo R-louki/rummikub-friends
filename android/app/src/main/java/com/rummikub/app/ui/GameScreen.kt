@@ -74,6 +74,7 @@ fun GameScreen(
     val workingBoard by turnController.board.collectAsState()
     val workingRack by turnController.rack.collectAsState()
     val rackEpoch by turnController.rackEpoch.collectAsState()
+    var rackCollapsed by remember { mutableStateOf(false) }
     val selectedList by turnController.selectedTileIds.collectAsState()
     val selectedTileIds = remember(selectedList) { selectedList.toSet() }
     val newTileIds by turnController.newBoardTileIds.collectAsState()
@@ -294,6 +295,8 @@ fun GameScreen(
                 PlayerRackView(
                     rack = workingRack,
                     layoutEpoch = rackEpoch,
+                    collapsed = rackCollapsed,
+                    onToggleCollapsed = { rackCollapsed = !rackCollapsed },
                     isMyTurn = isMyTurn,
                     selectedTileIds = selectedTileIds,
                     onTileTapped = { tile ->
@@ -304,7 +307,7 @@ fun GameScreen(
                     onRackTapped = {
                         if (turnController.sendSelectedTo(DropTarget.Rack)) audioController.onTileSnapped()
                     },
-                    modifier = Modifier.height(92.dp)
+                    modifier = Modifier.height(if (rackCollapsed) 56.dp else 92.dp)
                 )
             }
 
@@ -313,37 +316,39 @@ fun GameScreen(
             // ==========================================
             Column(
                 modifier = Modifier
-                    .width(76.dp)
+                    .width(54.dp)
                     .fillMaxHeight()
                     .background(Color(0xFF1B0E09))
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .padding(horizontal = 3.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                RibbonButton(
-                    label = if (actionInFlight) "⏳ Envoi…" else "✓ Valider",
+                RoundAction(
+                    glyph = if (actionInFlight) "⏳" else "✓",
                     enabled = isMyTurn && !actionInFlight,
                     container = Color(0xFF2E7D32),
-                    height = 54.dp,
-                    fontSize = 13.sp
+                    size = 48.dp,
+                    glyphSize = 24.sp
                 ) {
                     view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                     if (turnController.commitTurn()) audioController.onTurnSuccess()
                 }
-                RibbonButton(
-                    label = if (actionInFlight) "⏳ …" else "+1 Piocher",
+                RoundAction(
+                    glyph = if (actionInFlight) "⏳" else "+1",
                     enabled = isMyTurn && !actionInFlight,
                     container = Color(0xFFE65100),
-                    height = 44.dp
+                    size = 48.dp,
+                    glyphSize = 18.sp
                 ) {
                     view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                     turnController.drawTile()
                 }
-                RibbonButton(
-                    label = "↺ Annuler",
+                RoundAction(
+                    glyph = "↺",
                     enabled = isMyTurn && summary.isDirty,
                     container = Color(0xFF5D4037),
-                    height = 40.dp,
+                    size = 40.dp,
+                    glyphSize = 20.sp,
                     textColor = Color(0xFFFFCC80)
                 ) {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -351,23 +356,17 @@ fun GameScreen(
                 }
 
                 if (selectedTileIds.isNotEmpty()) {
-                    RibbonButton(
-                        label = "✕ Désélect.",
-                        enabled = true,
-                        container = Color(0xFF37474F),
-                        height = 34.dp,
-                        fontSize = 10.sp
-                    ) { turnController.clearSelection() }
+                    RoundAction(glyph = "✕", enabled = true, container = Color(0xFF37474F), size = 36.dp, glyphSize = 16.sp) {
+                        turnController.clearSelection()
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(2.dp))
-
-                RibbonButton(label = "🌈 Séries", enabled = true, container = Color(0xFF3E2723), height = 36.dp, fontSize = 10.sp) {
+                RoundAction(glyph = "🌈", enabled = true, container = Color(0xFF3E2723), size = 36.dp, glyphSize = 16.sp) {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
                     turnController.sortByRun()
                 }
-                RibbonButton(label = "🔢 Groupes", enabled = true, container = Color(0xFF3E2723), height = 36.dp, fontSize = 10.sp) {
+                RoundAction(glyph = "🔢", enabled = true, container = Color(0xFF3E2723), size = 36.dp, glyphSize = 16.sp) {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
                     turnController.sortByGroup()
@@ -375,13 +374,13 @@ fun GameScreen(
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // Microphone: push-to-talk button, or mute toggle in open-mic mode
+                // Microphone: push-to-talk button (hold), or mute toggle in open-mic mode
                 if (voiceAvailable) {
                     if (voiceMode == VoiceChatMode.PUSH_TO_TALK) {
                         val pressed by audioController.voiceChat.isPushToTalkPressed.collectAsState()
                         Box(
                             modifier = Modifier
-                                .size(56.dp)
+                                .size(46.dp)
                                 .clip(CircleShape)
                                 .background(if (pressed) Color(0xFF00E5FF) else Color(0xFF006064))
                                 .border(2.dp, Color(0xFF00E5FF), CircleShape)
@@ -395,26 +394,20 @@ fun GameScreen(
                                     )
                                 },
                             contentAlignment = Alignment.Center
-                        ) {
-                            Text("🎙️", fontSize = 22.sp)
-                        }
-                        Text("Maintenir", color = Color(0x99FFFFFF), fontSize = 9.sp)
+                        ) { Text("🎙️", fontSize = 20.sp) }
                     } else {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(42.dp)
                                 .clip(CircleShape)
                                 .background(if (isMicMuted) Color(0xFF7F1D1D) else if (isLocalSpeaking) Color(0xFF00838F) else Color(0xFF263238))
                                 .border(2.dp, if (isMicMuted) StatusDisconnected else VadSpeakingHalo, CircleShape)
                                 .clickable { audioController.toggleMicrophoneMute() },
                             contentAlignment = Alignment.Center
-                        ) {
-                            Text(if (isMicMuted) "🔇" else "🎙️", fontSize = 20.sp)
-                        }
-                        Text(if (isMicMuted) "Micro coupé" else "Micro ouvert", color = Color(0x99FFFFFF), fontSize = 9.sp)
+                        ) { Text(if (isMicMuted) "🔇" else "🎙️", fontSize = 18.sp) }
                     }
                 } else {
-                    Text("🎙️ Micro\nnon autorisé", color = Color(0x66FFFFFF), fontSize = 9.sp, textAlign = TextAlign.Center)
+                    Text("🎙️\n✕", color = Color(0x66FFFFFF), fontSize = 12.sp, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -431,37 +424,30 @@ fun GameScreen(
     }
 }
 
+/** Round icon-only action button for the right ribbon. */
 @Composable
-private fun RibbonButton(
-    label: String,
+private fun RoundAction(
+    glyph: String,
     enabled: Boolean,
     container: Color,
-    height: androidx.compose.ui.unit.Dp,
-    fontSize: androidx.compose.ui.unit.TextUnit = 11.sp,
+    size: androidx.compose.ui.unit.Dp,
+    glyphSize: androidx.compose.ui.unit.TextUnit,
     textColor: Color = Color.White,
     onClick: () -> Unit
 ) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(height),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = container,
-            disabledContainerColor = container.copy(alpha = 0.35f),
-            disabledContentColor = Color(0x88FFFFFF)
-        ),
-        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-        shape = RoundedCornerShape(10.dp)
+            .size(size)
+            .clip(CircleShape)
+            .background(if (enabled) container else container.copy(alpha = 0.35f))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
         Text(
-            text = label,
-            fontSize = fontSize,
+            text = glyph,
+            fontSize = glyphSize,
             fontWeight = FontWeight.Bold,
-            color = if (enabled) textColor else Color(0x88FFFFFF),
-            textAlign = TextAlign.Center,
-            maxLines = 1
+            color = if (enabled) textColor else Color(0x88FFFFFF)
         )
     }
 }
