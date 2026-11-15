@@ -213,12 +213,6 @@ class WebRtcVoiceEngine(
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 @Suppress("DEPRECATION")
                 audioManager.isSpeakerphoneOn = true
-                // The loudspeaker plays on the "call" volume, often left very low: raise it to 90 %
-                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-                val target = (max * 0.9f).toInt().coerceAtLeast(1)
-                if (audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < target) {
-                    audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target, 0)
-                }
             }
         } catch (_: Exception) {}
     }

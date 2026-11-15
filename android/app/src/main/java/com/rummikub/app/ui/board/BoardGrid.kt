@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,7 @@ fun BoardGrid(
     onTileTapped: (Tile) -> Unit,
     onTileDropped: (tileId: String, target: DropTarget) -> Unit,
     onTargetTapped: (target: DropTarget) -> Unit,
+    onSelectChain: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val hasSelection = selectedTileIds.isNotEmpty()
@@ -129,7 +131,8 @@ fun BoardGrid(
                                         edgeWidth = fit.edgeWidth,
                                         onTileTapped = onTileTapped,
                                         onTileDropped = onTileDropped,
-                                        onTargetTapped = onTargetTapped
+                                        onTargetTapped = onTargetTapped,
+                                        onSelectChain = onSelectChain
                                     )
                                 }
                             }
@@ -213,14 +216,18 @@ fun MeldGroupContainer(
     onTileTapped: (Tile) -> Unit,
     onTileDropped: (tileId: String, target: DropTarget) -> Unit,
     onTargetTapped: (target: DropTarget) -> Unit,
+    onSelectChain: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val validation = remember(meld.tiles) { BoardValidator.validateMeld(meld) }
-    val borderColor = when {
+    val borderTarget = when {
         meld.tiles.size < 3 -> Color(0xFFFFA000).copy(alpha = 0.55f) // Incomplete (<3 tiles)
         validation.isValid -> Color(0xFF81C784).copy(alpha = 0.30f)  // Valid set
         else -> Color(0xFFE57373).copy(alpha = 0.9f)                // Illegal set
     }
+    val borderColor by androidx.compose.animation.animateColorAsState(
+        borderTarget, androidx.compose.animation.core.tween(260), label = "meld_border"
+    )
 
     Row(
         modifier = modifier
@@ -270,6 +277,7 @@ fun MeldGroupContainer(
                             tileId = tile.id,
                             enabled = isMyTurn,
                             immediateDrag = true,
+                            onLongPress = { onSelectChain(meld.tiles.drop(index).map { it.id }) },
                             onTap = tapAction
                         )
                     )

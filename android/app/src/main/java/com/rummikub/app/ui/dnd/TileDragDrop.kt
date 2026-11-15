@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.draganddrop.dragAndDropSource
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.gestures.awaitEachGesture
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -51,9 +52,11 @@ fun Modifier.tileDragSource(
     tileId: String,
     enabled: Boolean,
     immediateDrag: Boolean = false,
+    onLongPress: (() -> Unit)? = null,
     onTap: () -> Unit
 ): Modifier {
     val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnLong by rememberUpdatedState(onLongPress)
     if (!enabled) return this
     if (immediateDrag) {
         // Rack tiles: the tile follows the finger as soon as it moves (no long press needed)
@@ -61,11 +64,23 @@ fun Modifier.tileDragSource(
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 var dragged = false
+                var held = false
+                val deadline = System.currentTimeMillis() + viewConfiguration.longPressTimeoutMillis
                 while (true) {
-                    val event = awaitPointerEvent()
+                    // Holding still: select the tiles that follow this one (5 held in 5-6-7 selects 5, 6 and 7)
+                    val event = if (held || currentOnLong == null) {
+                        awaitPointerEvent()
+                    } else {
+                        withTimeoutOrNull((deadline - System.currentTimeMillis()).coerceAtLeast(1L)) { awaitPointerEvent() }
+                    }
+                    if (event == null) {
+                        held = true
+                        currentOnLong?.invoke()
+                        continue
+                    }
                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
                     if (!change.pressed) {
-                        if (!dragged) currentOnTap()
+                        if (!dragged && !held) currentOnTap()
                         break
                     }
                     val moved = change.position - down.position

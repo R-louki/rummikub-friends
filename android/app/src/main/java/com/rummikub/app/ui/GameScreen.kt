@@ -5,6 +5,9 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.shadow
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -156,6 +159,13 @@ fun GameScreen(
     }
 
     // Valid moves that were not confirmed are sent in the last two seconds instead of being lost
+    val validReady = remember(summary, workingBoard, workingRack, isMyTurn, actionInFlight) {
+        isMyTurn && !actionInFlight && summary.tilesPlaced > 0 && turnController.hasValidPendingMoves()
+    }
+    // A short vibration when it becomes my turn
+    LaunchedEffect(isMyTurn) {
+        if (isMyTurn) view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+    }
     var autoCommitted by remember { mutableStateOf(false) }
     LaunchedEffect(serverBoard.versionId, serverBoard.activePlayerId) { autoCommitted = false }
     LaunchedEffect(remainingMillis) {
@@ -260,6 +270,10 @@ fun GameScreen(
                                 audioController.onTileSnapped()
                             }
                         },
+                        onSelectChain = { ids ->
+                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            turnController.selectTiles(ids)
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                     // The hint fades after a moment instead of staying over the table
@@ -292,6 +306,10 @@ fun GameScreen(
                     collapsed = rackCollapsed,
                     drawnTileId = drawnTileId,
                     sortMode = rackSortMode,
+                    onSelectTiles = { ids ->
+                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        turnController.selectTiles(ids)
+                    },
                     onToggleCollapsed = { rackCollapsed = !rackCollapsed },
                     onSortRuns = {
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -322,7 +340,7 @@ fun GameScreen(
                     .width(58.dp)
                     .fillMaxHeight()
                     .padding(horizontal = 3.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 RoundAction(
@@ -330,7 +348,8 @@ fun GameScreen(
                     enabled = isMyTurn && !actionInFlight,
                     container = Color(0xFF2E7D32),
                     size = 52.dp,
-                    glyphSize = 26.sp
+                    glyphSize = 26.sp,
+                    pulse = validReady
                 ) {
                     view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                     if (turnController.commitTurn()) audioController.onTurnSuccess()
@@ -358,8 +377,8 @@ fun GameScreen(
                     glyph = "↶",
                     enabled = isMyTurn && canUndo,
                     container = Color(0xFF6D4C41),
-                    size = 40.dp,
-                    glyphSize = 20.sp,
+                    size = 36.dp,
+                    glyphSize = 18.sp,
                     textColor = Color(0xFFFFE0B2)
                 ) {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -369,15 +388,15 @@ fun GameScreen(
                     glyph = "↺",
                     enabled = isMyTurn && summary.isDirty,
                     container = Color(0xFF5D4037),
-                    size = 40.dp,
-                    glyphSize = 20.sp,
+                    size = 36.dp,
+                    glyphSize = 18.sp,
                     textColor = Color(0xFFFFCC80)
                 ) {
                     view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                     turnController.resetTurn()
                 }
                 if (selectedTileIds.isNotEmpty()) {
-                    RoundAction(glyph = "✕", enabled = true, container = Color(0xFF37474F), size = 34.dp, glyphSize = 15.sp) {
+                    RoundAction(glyph = "✕", enabled = true, container = Color(0xFF37474F), size = 32.dp, glyphSize = 14.sp) {
                         turnController.clearSelection()
                     }
                 }
@@ -402,7 +421,7 @@ fun GameScreen(
                         val pressed by audioController.voiceChat.isPushToTalkPressed.collectAsState()
                         Box(
                             modifier = Modifier
-                                .size(46.dp)
+                                .size(42.dp)
                                 .clip(CircleShape)
                                 .background(if (pressed) Color(0xFF00E5FF) else Color(0xFF006064))
                                 .border(2.dp, Color(0xFF00E5FF), CircleShape)
@@ -420,7 +439,7 @@ fun GameScreen(
                     } else {
                         Box(
                             modifier = Modifier
-                                .size(42.dp)
+                                .size(38.dp)
                                 .clip(CircleShape)
                                 .background(if (isMicMuted) Color(0xFF7F1D1D) else if (isLocalSpeaking) Color(0xFF00838F) else Color(0xFF263238))
                                 .border(2.dp, if (isMicMuted) StatusDisconnected else VadSpeakingHalo, CircleShape)
@@ -433,7 +452,7 @@ fun GameScreen(
                 // Quick reactions
                 var reactOpen by remember { mutableStateOf(false) }
                 Box {
-                    RoundAction(glyph = "😀", enabled = true, container = Color(0xFF26140B), size = 38.dp, glyphSize = 18.sp) {
+                    RoundAction(glyph = "😀", enabled = true, container = Color(0xFF26140B), size = 34.dp, glyphSize = 16.sp) {
                         reactOpen = true
                     }
                     DropdownMenu(expanded = reactOpen, onDismissRequest = { reactOpen = false }) {
@@ -459,7 +478,7 @@ fun GameScreen(
                 // Menu: table code, connection quality, sound settings
                 var menuOpen by remember { mutableStateOf(false) }
                 Box {
-                    RoundAction(glyph = "⋯", enabled = true, container = Color(0xFF26140B), size = 38.dp, glyphSize = 20.sp) {
+                    RoundAction(glyph = "⋯", enabled = true, container = Color(0xFF26140B), size = 34.dp, glyphSize = 18.sp) {
                         menuOpen = true
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -561,14 +580,44 @@ private fun RoundAction(
     size: androidx.compose.ui.unit.Dp,
     glyphSize: androidx.compose.ui.unit.TextUnit,
     textColor: Color = Color.White,
+    pulse: Boolean = false,
     onClick: () -> Unit
 ) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val press by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) 0.88f else 1f,
+        androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 600f), label = "press"
+    )
+    val beat by androidx.compose.animation.core.rememberInfiniteTransition(label = "beat").animateFloat(
+        initialValue = 1f, targetValue = 1.12f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(600), androidx.compose.animation.core.RepeatMode.Reverse
+        ), label = "beatScale"
+    )
     Box(
         modifier = Modifier
             .size(size)
+            .graphicsLayer {
+                val k = press * (if (pulse && enabled) beat else 1f)
+                scaleX = k
+                scaleY = k
+            }
+            .shadow(if (enabled) 8.dp else 2.dp, CircleShape)
             .clip(CircleShape)
-            .background(if (enabled) container else container.copy(alpha = 0.35f))
-            .clickable(enabled = enabled, onClick = onClick),
+            .background(
+                if (enabled) Brush.radialGradient(
+                    colors = listOf(
+                        androidx.compose.ui.graphics.lerp(container, Color.White, 0.30f),
+                        container,
+                        androidx.compose.ui.graphics.lerp(container, Color.Black, 0.40f)
+                    ),
+                    center = androidx.compose.ui.geometry.Offset(size.value * 1.1f, size.value * 0.9f),
+                    radius = size.value * 2.2f
+                ) else Brush.linearGradient(listOf(container.copy(alpha = 0.35f), container.copy(alpha = 0.35f)))
+            )
+            .border(1.dp, Color(0x33FFFFFF), CircleShape)
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -649,12 +698,20 @@ private fun RibbonPlayer(
                     timerFraction > 0.2f -> Color(0xFFFFD54F)
                     else -> Color(0xFFFF5252)
                 }
+                val urgent = secondsLeft <= 10
+                val urgentAlpha by androidx.compose.animation.core.rememberInfiniteTransition(label = "urgent").animateFloat(
+                    initialValue = 1f, targetValue = 0.35f,
+                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                        androidx.compose.animation.core.tween(380), androidx.compose.animation.core.RepeatMode.Reverse
+                    ), label = "urgentAlpha"
+                )
                 Text(
                     text = "$secondsLeft",
                     color = timeColor,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Black,
                     modifier = Modifier
+                        .graphicsLayer { alpha = if (urgent) urgentAlpha else 1f }
                         .align(Alignment.BottomCenter)
                         .offset(y = 7.dp)
                         .background(Color(0xE6000000), RoundedCornerShape(10.dp))

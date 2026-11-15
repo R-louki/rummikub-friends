@@ -178,6 +178,11 @@ class TurnController(
         _selectedTileIds.value = if (tileId in current) current - tileId else current + tileId
     }
 
+    /** Selects several tiles at once (hold on a tile = it and the tiles that follow it). */
+    fun selectTiles(ids: List<String>) {
+        _selectedTileIds.value = ids.distinct()
+    }
+
     fun clearSelection() {
         _selectedTileIds.value = emptyList()
     }

@@ -57,6 +57,7 @@ fun PlayerRackView(
     collapsed: Boolean,
     drawnTileId: String? = null,
     sortMode: Int = 0,
+    onSelectTiles: (List<String>) -> Unit = {},
     onToggleCollapsed: () -> Unit,
     onSortRuns: () -> Unit,
     onSortGroups: () -> Unit,
@@ -183,9 +184,12 @@ fun PlayerRackView(
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ordered.forEach { tile ->
+                        ordered.forEachIndexed { index, tile ->
                             key(tile.id) {
-                                RackTile(tile, tileW, tileH, tile.id in selectedTileIds, isMyTurn, onTileTapped, tile.id == drawnTileId)
+                                RackTile(
+                                    tile, tileW, tileH, tile.id in selectedTileIds, isMyTurn, onTileTapped, tile.id == drawnTileId,
+                                    onLongPress = { onSelectTiles(chainOf(tile, ordered.drop(index + 1))) }
+                                )
                             }
                         }
                     }
@@ -217,6 +221,18 @@ fun PlayerRackView(
                                         drawn = tile != null && tile.id == drawnTileId,
                                         selected = tile != null && tile.id in selectedTileIds,
                                         onTileTapped = onTileTapped,
+                                        onLongPress = {
+                                            if (tile != null) {
+                                                // the tiles lying right next to it, up to the first empty slot
+                                                val followers = ArrayList<Tile>()
+                                                var c = col + 1
+                                                while (c < columns) {
+                                                    followers += tileAtSlot[row * ROW_STRIDE + c] ?: break
+                                                    c++
+                                                }
+                                                onSelectTiles(chainOf(tile, followers))
+                                            }
+                                        },
                                         onDrop = { id -> dropOnSlot(id, slot) },
                                         onTapEmpty = { if (isMyTurn && selectedOnBoard) onRackTapped() }
                                     )
@@ -256,7 +272,10 @@ private fun RackTool(glyph: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RackTile(tile: Tile, w: Dp, h: Dp, selected: Boolean, isMyTurn: Boolean, onTileTapped: (Tile) -> Unit, drawn: Boolean = false) {
+private fun RackTile(
+    tile: Tile, w: Dp, h: Dp, selected: Boolean, isMyTurn: Boolean, onTileTapped: (Tile) -> Unit,
+    drawn: Boolean = false, onLongPress: (() -> Unit)? = null
+) {
     Box(modifier = if (drawn) Modifier.drawnEffect() else Modifier) {
     TileView(
         tile = tile,
@@ -267,10 +286,37 @@ private fun RackTile(tile: Tile, w: Dp, h: Dp, selected: Boolean, isMyTurn: Bool
             tileId = tile.id,
             enabled = true, // the rack can always be rearranged, even outside my turn
             immediateDrag = true,
+            onLongPress = onLongPress,
             onTap = { if (isMyTurn) onTileTapped(tile) }
         )
     )
     }
+}
+
+/**
+ * Hold a tile: it and the tiles that follow it form the selection, as long as they continue a
+ * combination (same colour and numbers in a row, or same number in different colours).
+ * 5 held in "5 6 7" selects 5, 6 and 7; the whole lot can then be dragged.
+ */
+private fun chainOf(start: Tile, followers: List<Tile>): List<String> {
+    val out = arrayListOf(start.id)
+    var prev = start
+    var mode = 0 // 0 not known yet, 1 run, 2 group
+    for (t in followers) {
+        val run = !prev.isJoker && !t.isJoker && prev.color == t.color && t.number == prev.number + 1
+        val group = !prev.isJoker && !t.isJoker && prev.number == t.number && prev.color != t.color
+        val ok = when {
+            prev.isJoker || t.isJoker -> true
+            mode == 0 -> run || group
+            mode == 1 -> run
+            else -> group
+        }
+        if (!ok) break
+        if (mode == 0 && !prev.isJoker && !t.isJoker) mode = if (run) 1 else 2
+        out += t.id
+        prev = t
+    }
+    return out
 }
 
 /** The tile just drawn: it flies in (springy zoom) and pulses with a golden ring for a few seconds. */
@@ -306,6 +352,7 @@ private fun RackSlot(
     drawn: Boolean = false,
     selected: Boolean,
     onTileTapped: (Tile) -> Unit,
+    onLongPress: (() -> Unit)? = null,
     onDrop: (String) -> Unit,
     onTapEmpty: () -> Unit
 ) {
@@ -322,7 +369,7 @@ private fun RackSlot(
                 .background(if (hovered) Color(0x5500E5FF) else Color.Transparent)
         ) {
             if (tile != null) {
-                key(tile.id) { RackTile(tile, tileW, tileH, selected, isMyTurn, onTileTapped, drawn) }
+                key(tile.id) { RackTile(tile, tileW, tileH, selected, isMyTurn, onTileTapped, drawn, onLongPress) }
             }
         }
     }
