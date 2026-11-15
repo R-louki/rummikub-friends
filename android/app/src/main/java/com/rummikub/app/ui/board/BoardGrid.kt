@@ -76,7 +76,7 @@ fun BoardGrid(
             modifier = Modifier
                 .fillMaxSize()
                 .then(if (feltHovered) Modifier.background(Color(0x1A00E5FF)) else Modifier)
-                .padding(6.dp)
+                .padding(3.dp)
         ) {
             val fit = remember(boardState.melds, maxWidth, maxHeight) {
                 fitTiles(boardState.melds, maxWidth, maxHeight)

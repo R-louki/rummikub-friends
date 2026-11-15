@@ -161,10 +161,10 @@ fun GameScreen(
             // ==========================================
             Column(
                 modifier = Modifier
-                    .width(84.dp)
+                    .width(70.dp)
                     .fillMaxHeight()
                     .background(Color(0xFF07170D))
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                    .padding(horizontal = 3.dp, vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 SynchronizedTimerView(
@@ -229,33 +229,38 @@ fun GameScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
-                Text(
-                    text = statusText,
-                    color = statusColor,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                // One compact line: my status on the left, what the opponent just did on the right
+                // (orange = laid down from the rack, violet = moved on the table)
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = if (lastMove != null) 0.dp else 3.dp)
-                )
-                // What the opponent just did: orange = laid down from the rack, violet = moved on the table
-                lastMove?.let { move ->
+                        .padding(bottom = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "Dernier coup : ${move.description}" +
-                            (if (move.placed.isNotEmpty()) "  ■ orange = posées" else "") +
-                            (if (move.moved.isNotEmpty()) "  ■ violet = déplacées" else ""),
-                        color = Color(0xFFFFB74D),
+                        text = statusText,
+                        color = statusColor,
                         fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 3.dp)
+                        modifier = Modifier.weight(1f, fill = lastMove == null)
                     )
+                    lastMove?.let { move ->
+                        Text(
+                            text = move.description +
+                                (if (move.placed.isNotEmpty()) "  ■ posées" else "") +
+                                (if (move.moved.isNotEmpty()) "  ■ déplacées" else ""),
+                            color = Color(0xFFFFB74D),
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
                 // While another player is arranging the table, show their moves live
@@ -284,7 +289,7 @@ fun GameScreen(
                         .weight(1f)
                 )
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 PlayerRackView(
                     rack = workingRack,
@@ -308,10 +313,10 @@ fun GameScreen(
             // ==========================================
             Column(
                 modifier = Modifier
-                    .width(96.dp)
+                    .width(76.dp)
                     .fillMaxHeight()
                     .background(Color(0xFF1B0E09))
-                    .padding(horizontal = 5.dp, vertical = 6.dp),
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
