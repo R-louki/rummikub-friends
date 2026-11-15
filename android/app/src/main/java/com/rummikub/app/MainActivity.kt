@@ -6,7 +6,11 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.layout.Box
@@ -106,6 +110,36 @@ class MainActivity : ComponentActivity() {
                 var roundNumber by remember { mutableStateOf(1) }
 
                 val snackbarHostState = remember { SnackbarHostState() }
+                var showQuitDialog by remember { mutableStateOf(false) }
+
+                // Back button: never drops the player out of the app by accident.
+                //  - in game: ask before leaving the table
+                //  - waiting room / victory: leave the room and go back to the lobby
+                //  - lobby: cancel a connection in progress, otherwise the system closes the app
+                BackHandler(enabled = currentScreen != AppScreen.LOBBY || connectionStatus is com.rummikub.core.network.ConnectionStatus.Connecting || showLobbyAudio) {
+                    when {
+                        showLobbyAudio -> showLobbyAudio = false
+                        currentScreen == AppScreen.IN_GAME -> showQuitDialog = true
+                        currentScreen == AppScreen.LOBBY -> networkRepository.cancelConnecting()
+                        else -> lifecycleScope.launch { networkRepository.leaveRoom() }
+                    }
+                }
+                if (showQuitDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showQuitDialog = false },
+                        title = { Text("Quitter la partie ?") },
+                        text = { Text("Vous quittez la table : la partie continue sans vous ou s'arrête s'il ne reste personne.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showQuitDialog = false
+                                lifecycleScope.launch { networkRepository.leaveRoom() }
+                            }) { Text("Quitter") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showQuitDialog = false }) { Text("Rester") }
+                        }
+                    )
+                }
 
                 // Room joined -> waiting room; room left (or lost) -> lobby
                 LaunchedEffect(roomCode) {

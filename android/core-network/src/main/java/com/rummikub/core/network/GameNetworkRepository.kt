@@ -88,6 +88,8 @@ class GameNetworkRepository(
     private var lastDragSendTime = 0L
 
     private var reconnectJob: Job? = null
+    @Volatile private var pendingAction: NetworkPacket? = null
+    private var pendingJob: Job? = null
     private var connectJob: Job? = null
 
     init {
@@ -192,6 +194,7 @@ class GameNetworkRepository(
         } catch (_: Exception) {}
 
         localActionQueue.clear()
+        clearPendingAction()
         _roomCode.value = null
         _myPlayerId.value = null
         _sessionToken.value = null
@@ -228,7 +231,7 @@ class GameNetworkRepository(
             proposedMelds = proposedMelds,
             remainingRackTileIds = remainingRackTileIds
         )
-        sendOrQueue(packet, notifyIfOffline = true)
+        sendTurnAction(packet)
     }
 
     suspend fun drawTile() {
@@ -237,7 +240,7 @@ class GameNetworkRepository(
             return
         }
         val packet = NetworkPacket.DrawTileRequest(playerId = myId)
-        sendOrQueue(packet, notifyIfOffline = true)
+        sendTurnAction(packet)
     }
 
     suspend fun sendVoiceSignal(signal: NetworkPacket.VoiceSignalPacket) {
@@ -248,12 +251,45 @@ class GameNetworkRepository(
         }
     }
 
-    private suspend fun sendOrQueue(packet: NetworkPacket, notifyIfOffline: Boolean = false) {
-        if (!webSocketClient.isConnected && notifyIfOffline) {
+    /**
+     * Sends "Valider" / "Piocher" and keeps it as pending until the server answers.
+     * A phone that silently lost its network would otherwise swallow the action: if no answer
+     * comes back within a few seconds the connection is considered dead, a reconnection starts,
+     * and the pending action is sent again once the server has confirmed it is still our turn.
+     */
+    private suspend fun sendTurnAction(packet: NetworkPacket) {
+        pendingAction = packet
+        startPendingWatchdog(packet)
+        if (!webSocketClient.isConnected) {
             _errors.emit("Connexion perdue : votre action sera envoyée dès la reconnexion.")
-            // The socket is gone but nobody noticed yet: start recovering right away.
             handleConnectionLost("Action sans connexion")
+            return
         }
+        try {
+            webSocketClient.send(packet)
+        } catch (e: Exception) {
+            handleConnectionLost("Envoi impossible: ${e.message}")
+        }
+    }
+
+    private fun startPendingWatchdog(packet: NetworkPacket) {
+        pendingJob?.cancel()
+        pendingJob = scope.launch {
+            delay(4_000L)
+            if (pendingAction === packet) {
+                _errors.emit("Le serveur ne répond pas : reconnexion en cours...")
+                handleConnectionLost("Pas de réponse du serveur")
+            }
+        }
+    }
+
+    private fun clearPendingAction() {
+        pendingAction = null
+        pendingJob?.cancel()
+        pendingJob = null
+    }
+
+    private suspend fun sendOrQueue(packet: NetworkPacket) {
         if (webSocketClient.isConnected) {
             try {
                 webSocketClient.send(packet)
@@ -435,6 +471,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TurnCommittedEvent -> {
+                if (packet.activePlayerId == _myPlayerId.value) clearPendingAction()
                 // The server broadcasts the board before switching turns: apply nextPlayerId ourselves.
                 _boardState.value = packet.boardState.copy(
                     activePlayerId = packet.nextPlayerId,
@@ -447,6 +484,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TurnRollbackEvent -> {
+                if (packet.playerId == _myPlayerId.value) clearPendingAction()
                 _gracePeriodCountdown.value = null
                 _boardState.value = packet.restoredBoardState.copy(
                     activePlayerId = packet.nextPlayerId,
@@ -462,6 +500,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TileDrawnEvent -> {
+                if (packet.playerId == _myPlayerId.value) clearPendingAction()
                 _boardState.value = _boardState.value.copy(
                     drawPileCount = packet.newDrawPileCount,
                     activePlayerId = packet.nextPlayerId,
@@ -491,6 +530,21 @@ class GameNetworkRepository(
                 _players.value = packet.players
                 _gameConfig.value = packet.config
                 _isHost.value = packet.players.any { it.id == _myPlayerId.value && it.isHost }
+
+                // Reconnected: if our action never reached the server and it is still our turn, send it again.
+                val pending = pendingAction
+                if (pending != null) {
+                    val stillMyTurn = packet.boardState.activePlayerId == _myPlayerId.value && !packet.boardState.isGracePeriod
+                    if (stillMyTurn && (pending is NetworkPacket.DrawTileRequest ||
+                            (pending is NetworkPacket.EndTurnRequest))) {
+                        try {
+                            webSocketClient.send(pending)
+                            startPendingWatchdog(pending)
+                        } catch (_: Exception) {}
+                    } else {
+                        clearPendingAction()
+                    }
+                }
             }
 
             is NetworkPacket.PlayerDisconnectedEvent -> {
@@ -526,6 +580,8 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.ErrorResponse -> {
+                // Refusals of a turn action (nothing played, invalid proposal) also answer it
+                if (packet.code == "NO_TILES_PLAYED" || packet.code == "INVALID_PROPOSAL") clearPendingAction()
                 _errors.emit(packet.message)
             }
 

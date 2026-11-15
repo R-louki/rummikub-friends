@@ -384,3 +384,27 @@ test('Bots: every bot-only game ends (empty pile and no move = blocked game, low
     mock.timers.reset();
   }
 });
+
+test('Room: with a first-meld threshold of 0 players may touch existing melds right away', () => {
+  const room = new Room('FREE1', { ...DEFAULT_GAME_CONFIG, initialMeldThreshold: 0, turnDurationSeconds: 0 }, orderedDeck);
+  const w1 = ws();
+  const { player: p1 } = room.addPlayer('P1', 'Alice', asWs(w1));
+  room.addPlayer('P2', 'Bob', asWs(ws()));
+  room.startGame();
+
+  const t = (id: string, color: any, n: number) => ({ id, color, number: n, isJoker: false });
+  const eights: MeldSet = { id: 'g8', gridRow: 0, gridCol: 0, tiles: [t('Y8', 'YELLOW', 8), t('B8', 'BLUE', 8), t('K8', 'BLACK', 8)] };
+  const red8 = t('R8', 'RED', 8);
+  const snap = (room as any).turnSnapshot;
+  room.boardState.melds = [eights];
+  snap.board.melds = JSON.parse(JSON.stringify([eights]));
+  p1.rack.tiles = [red8, t('B3', 'BLUE', 3)];
+  snap.rack = JSON.parse(JSON.stringify(p1.rack));
+
+  room.handleEndTurn('P1', [{ ...eights, tiles: [eights.tiles[0], eights.tiles[1], red8, eights.tiles[2]] }], ['B3']);
+
+  assert.strictEqual(w1.ofType('turn_rollback_evt').length, 0);
+  assert.strictEqual(room.boardState.melds[0].tiles.length, 4);
+  assert.strictEqual(room.boardState.activePlayerId, 'P2');
+  room.dispose();
+});

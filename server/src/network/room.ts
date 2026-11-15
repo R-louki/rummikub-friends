@@ -557,6 +557,11 @@ export class Room {
       return;
     }
 
+    // Free play (threshold 0): no first-meld restriction at all
+    if (!player.rack.hasMadeInitialMeld && this.config.initialMeldThreshold <= 0) {
+      player.rack.hasMadeInitialMeld = true;
+    }
+
     // Validate Initial Meld if needed
     if (!player.rack.hasMadeInitialMeld) {
       const initialMeld = InitialMeldEvaluator.evaluate(

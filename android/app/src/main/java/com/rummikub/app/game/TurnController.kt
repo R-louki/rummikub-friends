@@ -68,7 +68,12 @@ class TurnController(
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
     private var snapshotBoard: BoardState = BoardState()
+        set(value) { field = value; _snapshotVersion.value++ }
     private var snapshotRack: PlayerRack = PlayerRack(playerId = "")
+        set(value) { field = value; _snapshotVersion.value++ }
+
+    /** Bumped each time the start-of-turn snapshot changes, so derived flows recompute even if the working state looks equal. */
+    private val _snapshotVersion = MutableStateFlow(0)
 
     /** IDs of the tiles that were on the rack at the start of the turn (the only ones that may come back). */
     private val snapshotRackIds: Set<String>
@@ -79,12 +84,10 @@ class TurnController(
         get() = snapshotBoard.allTileIds
 
     /** Tiles currently on the table that were not there at the start of the turn. */
-    val newBoardTileIds: StateFlow<Set<String>> = _board
-        .combine(_rack) { board, _ -> board.allTileIds - snapshotBoardTileIds }
+    val newBoardTileIds: StateFlow<Set<String>> = combine(_board, _rack, _snapshotVersion) { board, _, _ -> board.allTileIds - snapshotBoardTileIds }
         .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    val summary: StateFlow<TurnSummary> = _board
-        .combine(_rack) { board, rack -> computeSummary(board, rack) }
+    val summary: StateFlow<TurnSummary> = combine(_board, _rack, _snapshotVersion) { board, rack, _ -> computeSummary(board, rack) }
         .stateIn(scope, SharingStarted.Eagerly, TurnSummary())
 
     init {
