@@ -606,6 +606,25 @@ private fun RibbonPlayer(
             ) {
                 com.rummikub.app.ui.account.AvatarContent(player.avatar, player.name, 12.sp)
             }
+            // Time left, big and readable, on the avatar (same colour as the ring)
+            if (secondsLeft != null && timerFraction != null) {
+                val timeColor = when {
+                    timerFraction > 0.5f -> Color(0xFF69F0AE)
+                    timerFraction > 0.2f -> Color(0xFFFFD54F)
+                    else -> Color(0xFFFF5252)
+                }
+                Text(
+                    text = "$secondsLeft",
+                    color = timeColor,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .offset(y = 7.dp)
+                        .background(Color(0xE6000000), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 7.dp, vertical = 1.dp)
+                )
+            }
             if (player.isHost) {
                 Text("👑", fontSize = 10.sp, modifier = Modifier.align(Alignment.TopStart))
             }
@@ -635,10 +654,11 @@ private fun RibbonPlayer(
             fontSize = 9.sp,
             fontWeight = if (isActiveTurn) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = if (secondsLeft != null) 9.dp else 2.dp)
         )
         Text(
-            text = if (secondsLeft != null) "${player.tileCount} tuiles · ${secondsLeft}s" else "${player.tileCount} tuiles",
+            text = "${player.tileCount} tuiles",
             color = if (player.isConnected) Color(0xFFD7CCC8) else StatusReconnecting,
             fontSize = 8.sp,
             maxLines = 1

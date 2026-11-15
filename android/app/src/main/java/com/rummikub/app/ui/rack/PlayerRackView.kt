@@ -73,15 +73,29 @@ fun PlayerRackView(
         val needed = if (sortMode != 0) {
             (sortedLayout(rack.tiles, sortMode).maxOfOrNull { it.second } ?: -1) + 1
         } else rack.tiles.size
-        val single = needed <= bigColumns
+        val smallColumns = (usableWidth / (SmallW + 3.dp)).toInt()
+        // After a sort the gaps may need a few more slots: keep ONE row and shrink the tiles a little
+        val shrink = sortMode != 0 && needed > bigColumns && needed <= smallColumns
+        val single = needed <= bigColumns || shrink
         val rows = if (single) 1 else 2
-        val tileW = if (single) BigW else SmallW
-        val tileH = if (single) BigH else SmallH
-        val columns = if (single) bigColumns
-        else maxOf((usableWidth / (SmallW + 3.dp)).toInt(), (rack.tiles.size + 1) / 2 + 1)
+        val tileW = when {
+            shrink -> ((usableWidth - 12.dp) / needed - 3.dp).coerceIn(SmallW, BigW)
+            single -> BigW
+            else -> SmallW
+        }
+        val tileH = when {
+            shrink -> tileW * 1.35f
+            single -> BigH
+            else -> SmallH
+        }
+        val columns = when {
+            shrink -> needed
+            single -> bigColumns
+            else -> maxOf(smallColumns, (rack.tiles.size + 1) / 2 + 1)
+        }
         val folded = collapsed && !single
         val rackHeight = when {
-            single -> BigH + 16.dp
+            single -> tileH + 16.dp
             folded -> SmallH + 16.dp
             else -> SmallH * 2 + 3.dp + 16.dp
         }
