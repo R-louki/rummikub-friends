@@ -295,12 +295,10 @@ fun GameScreen(
                     onToggleCollapsed = { rackCollapsed = !rackCollapsed },
                     onSortRuns = {
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
                         turnController.sortByRun()
                     },
                     onSortGroups = {
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        audioController.sfxPlayer.playSound(com.rummikub.core.audio.GameSoundEffect.TILE_SORT)
                         turnController.sortByGroup()
                     },
                     isMyTurn = isMyTurn,

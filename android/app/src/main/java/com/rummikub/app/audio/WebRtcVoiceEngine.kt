@@ -143,8 +143,10 @@ class WebRtcVoiceEngine(
         // quality), not through the phone's call routing; without one, the phone sits on the table.
         val headset = headsetConnected()
         val adm = JavaAudioDeviceModule.builder(appContext)
-            .setUseHardwareAcousticEchoCanceler(true)
-            .setUseHardwareNoiseSuppressor(true)
+            // Software echo cancellation / noise suppression (same behaviour on every phone). The hardware
+            // ones, stacked on top, are a known cause of muffled or "underwater" voices.
+            .setUseHardwareAcousticEchoCanceler(false)
+            .setUseHardwareNoiseSuppressor(false)
             .setAudioAttributes(
                 android.media.AudioAttributes.Builder()
                     .setUsage(
@@ -211,6 +213,12 @@ class WebRtcVoiceEngine(
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 @Suppress("DEPRECATION")
                 audioManager.isSpeakerphoneOn = true
+                // The loudspeaker plays on the "call" volume, often left very low: raise it to 90 %
+                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                val target = (max * 0.9f).toInt().coerceAtLeast(1)
+                if (audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < target) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target, 0)
+                }
             }
         } catch (_: Exception) {}
     }
@@ -319,8 +327,9 @@ class WebRtcVoiceEngine(
         }
         peer.pc.createOffer(object : SimpleSdpObserver() {
             override fun onCreateSuccess(desc: SessionDescription) {
-                peer.pc.setLocalDescription(SimpleSdpObserver(), desc)
-                send(remoteId, SignalType.OFFER, sdp = desc.description)
+                val tuned = SessionDescription(desc.type, com.rummikub.core.audio.OpusSdpTuner.tune(desc.description))
+                peer.pc.setLocalDescription(SimpleSdpObserver(), tuned)
+                send(remoteId, SignalType.OFFER, sdp = tuned.description)
             }
         }, constraints)
     }
@@ -350,8 +359,9 @@ class WebRtcVoiceEngine(
                         drainCandidates(peer)
                         peer.pc.createAnswer(object : SimpleSdpObserver() {
                             override fun onCreateSuccess(desc: SessionDescription) {
-                                peer.pc.setLocalDescription(SimpleSdpObserver(), desc)
-                                send(from, SignalType.ANSWER, sdp = desc.description)
+                                val tuned = SessionDescription(desc.type, com.rummikub.core.audio.OpusSdpTuner.tune(desc.description))
+                                peer.pc.setLocalDescription(SimpleSdpObserver(), tuned)
+                                send(from, SignalType.ANSWER, sdp = tuned.description)
                             }
                         }, MediaConstraints())
                     }
