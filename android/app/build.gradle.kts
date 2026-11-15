@@ -23,6 +23,13 @@ fun signingValue(propertyKey: String, envKey: String): String? =
     keystoreProperties.getProperty(propertyKey)?.takeIf { it.isNotBlank() }
         ?: System.getenv(envKey)?.takeIf { it.isNotBlank() }
 
+// Public app configuration (android/app-config.properties)
+val appConfig = Properties().apply {
+    val f = rootProject.file("app-config.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
+}
+val googleWebClientId: String = appConfig.getProperty("googleWebClientId", "").trim()
+
 val releaseStorePath = signingValue("storeFile", "RUMMIKUB_KEYSTORE_FILE")
 val releaseStoreFile = releaseStorePath?.let { rootProject.file(it) }?.takeIf { it.exists() }
 val hasReleaseKey = releaseStoreFile != null
@@ -35,14 +42,31 @@ android {
         applicationId = "com.rummikub.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.2.4"
+        versionCode = 8
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
 
         // Phones only: drop the x86/x86_64 WebRTC binaries (emulators), halves the APK size.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    // Two ways to distribute the app:
+    //  direct: the APK shared by link, with built-in updates (GitHub releases)
+    //  play:   the Play Store bundle (the store updates it, no self-update code or permission)
+    flavorDimensions += "channel"
+    productFlavors {
+        create("direct") {
+            dimension = "channel"
+            buildConfigField("boolean", "SELF_UPDATE", "true")
+        }
+        create("play") {
+            dimension = "channel"
+            buildConfigField("boolean", "SELF_UPDATE", "false")
         }
     }
 
@@ -70,6 +94,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -107,6 +132,14 @@ dependencies {
     implementation(libs.media3.common)
 
     implementation(libs.webrtc.android)
+
+    // Google sign-in (Credential Manager)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play)
+    implementation(libs.google.id)
+
+    // Profile photos
+    implementation(libs.coil.compose)
 
     testImplementation(libs.junit)
 }

@@ -57,15 +57,16 @@ jobs:
           RUMMIKUB_KEYSTORE_PASSWORD: ${{ secrets.RUMMIKUB_KEYSTORE_PASSWORD }}
           RUMMIKUB_KEY_ALIAS: ${{ secrets.RUMMIKUB_KEY_ALIAS }}
           RUMMIKUB_KEY_PASSWORD: ${{ secrets.RUMMIKUB_KEY_PASSWORD }}
-        run: gradle :app:assembleDebug :app:assembleRelease --stacktrace --no-daemon
+        run: gradle :app:assembleDirectDebug :app:assembleDirectRelease :app:bundlePlayRelease --stacktrace --no-daemon
 
       - name: Upload Installable APKs
         uses: actions/upload-artifact@v4
         with:
           name: Rummikub-Friends-APKs
           path: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/direct/debug/*.apk
+            android/app/build/outputs/apk/direct/release/*.apk
+            android/app/build/outputs/bundle/playRelease/*.aab
           retention-days: 14
 
       - name: Run Unit Tests (Rules, Audio Ducking, Network)

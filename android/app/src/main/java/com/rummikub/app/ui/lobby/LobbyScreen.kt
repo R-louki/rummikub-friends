@@ -35,7 +35,14 @@ fun LobbyScreen(
     onJoinRoom: (roomCode: String, playerName: String) -> Unit,
     onCancelConnecting: () -> Unit,
     onOpenAudio: () -> Unit = {},
-    startingMessage: String? = null
+    startingMessage: String? = null,
+    accountPseudo: String? = null,
+    accountAvatar: String? = null,
+    onEditAvatar: () -> Unit = {},
+    pendingFriendRequests: Int = 0,
+    onOpenFriends: () -> Unit = {},
+    onOpenHistory: () -> Unit = {},
+    onSignOut: () -> Unit = {}
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
@@ -127,6 +134,33 @@ fun LobbyScreen(
             }
         }
 
+        // Account bar: who is signed in, friends, history
+        if (accountPseudo != null) {
+            Row(
+                modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                com.rummikub.app.ui.account.AvatarCircle(
+                    avatar = accountAvatar,
+                    name = accountPseudo,
+                    size = 34.dp,
+                    modifier = Modifier.clickable(onClick = onEditAvatar)
+                )
+                Text(accountPseudo, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 6.dp, end = 6.dp))
+                TextButton(onClick = onOpenFriends, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text(if (pendingFriendRequests > 0) "👥 Amis ($pendingFriendRequests)" else "👥 Amis", color = Color(0xFFFFD54F), fontSize = 12.sp)
+                }
+                TextButton(onClick = onOpenHistory, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("📜 Historique", color = Color(0xFFFFD54F), fontSize = 12.sp)
+                }
+                TextButton(onClick = onSignOut, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("Déconnexion", color = Color(0xFFFFCC80), fontSize = 11.sp)
+                }
+            }
+        }
+
         // Audio settings / "Ma musique"
         TextButton(
             onClick = onOpenAudio,
@@ -138,6 +172,7 @@ fun LobbyScreen(
         // Dialogs
         if (showCreateDialog) {
             CreateRoomDialog(
+                askName = accountPseudo == null,
                 onDismiss = { showCreateDialog = false },
                 onCreateRoom = { hostName, config ->
                     showCreateDialog = false
@@ -148,6 +183,7 @@ fun LobbyScreen(
 
         if (showJoinDialog) {
             JoinRoomDialog(
+                askName = accountPseudo == null,
                 onDismiss = { showJoinDialog = false },
                 onJoinRoom = { code, name ->
                     showJoinDialog = false

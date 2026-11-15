@@ -9,10 +9,11 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     // Ktor Client
-    implementation(libs.ktor.client.core)
+    api(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.websockets)
 
     testImplementation(libs.junit)
+    testImplementation(libs.ktor.client.mock)
     testImplementation(libs.kotlinx.coroutines.test)
 }

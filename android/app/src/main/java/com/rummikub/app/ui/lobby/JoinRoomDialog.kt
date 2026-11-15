@@ -21,7 +21,8 @@ import com.rummikub.app.ui.theme.WoodDarkBrown
 @Composable
 fun JoinRoomDialog(
     onDismiss: () -> Unit,
-    onJoinRoom: (roomCode: String, playerName: String) -> Unit
+    onJoinRoom: (roomCode: String, playerName: String) -> Unit,
+    askName: Boolean = true
 ) {
     var playerName by remember { mutableStateOf("") }
     var roomCode by remember { mutableStateOf("") }
@@ -60,7 +61,7 @@ fun JoinRoomDialog(
 
                 Divider(color = WoodBorder)
 
-                OutlinedTextField(
+                if (askName) OutlinedTextField(
                     value = playerName,
                     onValueChange = { playerName = it },
                     label = { Text("Votre pseudo") },

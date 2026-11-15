@@ -12,6 +12,7 @@ import { createStandardDeck } from '../engine/deck.js';
 import { BoardValidator } from '../engine/board-validator.js';
 import { InitialMeldEvaluator } from '../engine/initial-meld-evaluator.js';
 import { computeBotMove } from '../engine/bot-player.js';
+import type { GameRecord } from './accounts.js';
 import crypto from 'node:crypto';
 
 export type DeckFactory = () => Tile[];
@@ -128,13 +129,18 @@ export class Room {
     return null;
   }
 
-  addPlayer(id: string, name: string, socket: WebSocket): { player: ServerPlayer; sessionToken: string } {
+  /** Called when a round ends, with everything the game history needs. */
+  onGameOver: ((record: GameRecord) => void) | null = null;
+
+  addPlayer(id: string, name: string, socket: WebSocket, userId?: string, avatar?: string | null): { player: ServerPlayer; sessionToken: string } {
     const isHost = this.hostId === null;
     const sessionToken = crypto.randomUUID();
 
     const player: ServerPlayer = {
       id,
       name,
+      userId,
+      avatar: avatar ?? null,
       sessionToken,
       isHost,
       isConnected: true,
@@ -216,6 +222,7 @@ export class Room {
         sessionToken: crypto.randomUUID(),
         isHost: false,
         isBot: true,
+        avatar: 'emoji:🤖',
         isConnected: true,
         rack: {
           playerId: id,
@@ -949,6 +956,33 @@ export class Room {
       scores
     });
     this.changed();
+    this.reportGameOver(winner.name, scores);
+  }
+
+  private reportGameOver(winnerName: string, scores: any[]): void {
+    if (!this.onGameOver) return;
+    try {
+      this.onGameOver({
+        roomCode: this.roomCode,
+        roundNumber: this.roundNumber,
+        winnerName,
+        vsComputer: this.hasBots,
+        players: scores.map(sc => {
+          const p = this.players.get(sc.playerId);
+          return {
+            pseudo: sc.playerName,
+            userId: p?.userId ?? null,
+            isBot: !!p?.isBot,
+            isWinner: !!sc.isWinner,
+            remainingTiles: sc.remainingTileCount ?? 0,
+            roundDelta: sc.scoreDelta ?? 0,
+            totalScore: sc.totalScore ?? 0
+          };
+        })
+      });
+    } catch (err: any) {
+      console.error(`[Room ${this.roomCode}] historique: ${err?.message}`);
+    }
   }
 
   /** Everyone else left: the last player standing wins the round with 0 points. */
@@ -1123,6 +1157,7 @@ export class Room {
       isHost: p.isHost,
       isConnected: p.isConnected,
       isBot: !!p.isBot,
+      avatar: p.avatar ?? null,
       tileCount: p.rack.tiles.length,
       hasMadeInitialMeld: p.rack.hasMadeInitialMeld,
       totalScore: this.totalScores.get(p.id) ?? 0,

@@ -28,7 +28,22 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import com.rummikub.app.account.AccountController
+import com.rummikub.app.update.InstallResult
+import com.rummikub.app.update.UpdateManager
+import com.rummikub.app.ui.account.UpdateDialog
+import com.rummikub.core.network.ReleaseInfo
+import com.rummikub.app.account.AuthState
 import com.rummikub.app.audio.AndroidAudioBridge
+import com.rummikub.app.ui.account.FriendsDialog
+import com.rummikub.app.ui.account.HistoryDialog
+import com.rummikub.app.ui.account.InviteDialog
+import com.rummikub.app.ui.account.LoadingScreen
+import com.rummikub.app.ui.account.LoginScreen
+import com.rummikub.app.ui.account.PseudoScreen
+import com.rummikub.core.network.FriendStatus
+import com.rummikub.core.network.SupabaseApi
+import kotlinx.coroutines.delay
 import com.rummikub.app.game.TurnController
 import com.rummikub.app.ui.GameScreen
 import com.rummikub.app.ui.lobby.LobbyScreen
@@ -54,11 +69,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var turnController: TurnController
     private lateinit var audioBridge: AndroidAudioBridge
     private lateinit var audioController: AudioController
+    private lateinit var accounts: AccountController
+    private lateinit var updates: UpdateManager
 
     private val micPermissionGranted = mutableStateOf(false)
 
     private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) audioBridge.library.add(uris)
+    }
+
+    private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) lifecycleScope.launch { accounts.setPhotoAvatar(this@MainActivity, uri) }
     }
 
     private val micPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -78,6 +99,13 @@ class MainActivity : ComponentActivity() {
         val serverWsUrl = "wss://rummikub-friends.onrender.com"
 
         networkRepository = GameNetworkRepository(serverUrl = serverWsUrl)
+        updates = UpdateManager(this)
+        accounts = AccountController(
+            context = this,
+            api = SupabaseApi(AppConfig.SUPABASE_URL, AppConfig.SUPABASE_PUBLISHABLE_KEY),
+            repo = networkRepository,
+            scope = lifecycleScope
+        )
         turnController = TurnController(networkRepository, lifecycleScope)
         audioBridge = AndroidAudioBridge(this, networkRepository, lifecycleScope)
         audioController = audioBridge.controller
@@ -101,6 +129,27 @@ class MainActivity : ComponentActivity() {
                 val players by networkRepository.players.collectAsState()
                 val gameConfig by networkRepository.gameConfig.collectAsState()
                 val voiceAvailable by micPermissionGranted
+
+                // Account (Google sign-in, pseudo, friends, history)
+                val auth by accounts.auth.collectAsState()
+                val friends by accounts.friends.collectAsState()
+                val onlineFriends by networkRepository.onlineFriends.collectAsState()
+                val history by accounts.history.collectAsState()
+                val historyLoading by accounts.historyLoading.collectAsState()
+                var showFriends by remember { mutableStateOf(false) }
+                var showHistory by remember { mutableStateOf(false) }
+                var showAvatarPicker by remember { mutableStateOf(false) }
+
+                // Built-in update (direct APK only): checked once, a few seconds after the start
+                var update by remember { mutableStateOf<ReleaseInfo?>(null) }
+                var updateProgress by remember { mutableStateOf<Float?>(null) }
+                var updateMessage by remember { mutableStateOf<String?>(null) }
+                var updateFile by remember { mutableStateOf<java.io.File?>(null) }
+                LaunchedEffect(Unit) {
+                    delay(4_000)
+                    update = updates.checkForUpdate()
+                }
+                var pendingInvite by remember { mutableStateOf<com.rummikub.core.model.NetworkPacket.RoomInviteEvent?>(null) }
 
                 var currentScreen by remember { mutableStateOf(AppScreen.LOBBY) }
                 var showLobbyAudio by remember { mutableStateOf(false) }
@@ -195,6 +244,36 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // Account messages (sign-in problems, friend requests...)
+                LaunchedEffect(Unit) {
+                    accounts.messages.collect { message ->
+                        snackbarHostState.showSnackbar(message = message, withDismissAction = true, duration = SnackbarDuration.Long)
+                    }
+                }
+
+                // A friend invites me to his table
+                LaunchedEffect(Unit) {
+                    networkRepository.invites.collect { invite ->
+                        if (currentScreen == AppScreen.LOBBY) pendingInvite = invite
+                        else snackbarHostState.showSnackbar("${invite.fromPseudo} vous invite à jouer (terminez d'abord cette partie).")
+                    }
+                }
+
+                // Keep friends' presence fresh while waiting for players
+                LaunchedEffect(currentScreen, auth) {
+                    if (currentScreen == AppScreen.WAITING_ROOM && auth is AuthState.SignedIn) {
+                        while (true) {
+                            networkRepository.requestFriendsPresence()
+                            delay(6_000)
+                        }
+                    }
+                }
+
+                // Signed out while on a table (or kicked back to the login): go back to the lobby state
+                LaunchedEffect(auth) {
+                    if (auth is AuthState.SignedOut && currentScreen != AppScreen.LOBBY) currentScreen = AppScreen.LOBBY
+                }
+
                 // Local turn messages (invalid board, first meld too low...)
                 LaunchedEffect(Unit) {
                     turnController.messages.collect { message ->
@@ -228,7 +307,18 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    AnimatedContent(
+                  when (val a = auth) {
+                    AuthState.Loading -> LoadingScreen("Chargement de votre compte...")
+                    AuthState.SignedOut, AuthState.SigningIn -> LoginScreen(
+                        isSigningIn = a == AuthState.SigningIn,
+                        onSignInWithGoogle = { lifecycleScope.launch { accounts.signInWithGoogle(this@MainActivity) } }
+                    )
+                    is AuthState.NeedsPseudo -> PseudoScreen(
+                        check = { accounts.checkPseudo(it) },
+                        confirm = { accounts.choosePseudo(it) },
+                        onSignOut = { lifecycleScope.launch { accounts.signOut() } }
+                    )
+                    else -> AnimatedContent(
                         targetState = currentScreen,
                         label = "screen_transition"
                     ) { screen ->
@@ -249,7 +339,14 @@ class MainActivity : ComponentActivity() {
                                     onCancelConnecting = { networkRepository.cancelConnecting() },
                                     startingMessage = if (roomCode != null && gameConfig.botCount > 0)
                                         "Préparation de la partie contre l'ordinateur..." else null,
-                                    onOpenAudio = { showLobbyAudio = true }
+                                    onOpenAudio = { showLobbyAudio = true },
+                                    accountPseudo = (a as? AuthState.SignedIn)?.pseudo,
+                                    accountAvatar = (a as? AuthState.SignedIn)?.avatar,
+                                    onEditAvatar = { showAvatarPicker = true },
+                                    pendingFriendRequests = friends.count { it.status == FriendStatus.INCOMING_REQUEST },
+                                    onOpenFriends = { showFriends = true },
+                                    onOpenHistory = { showHistory = true },
+                                    onSignOut = { lifecycleScope.launch { accounts.signOut() } }
                                 )
                             }
 
@@ -266,7 +363,10 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onLeaveRoom = {
                                         lifecycleScope.launch { networkRepository.leaveRoom() }
-                                    }
+                                    },
+                                    inviteFriends = friends,
+                                    onlineFriendIds = onlineFriends,
+                                    onInviteFriend = { f -> lifecycleScope.launch { networkRepository.inviteFriend(f.userId) } }
                                 )
                             }
 
@@ -301,6 +401,90 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                    }
+                  }
+
+                    val pendingUpdate = update
+                    if (pendingUpdate != null && currentScreen == AppScreen.LOBBY && (auth is AuthState.SignedIn || auth is AuthState.Guest)) {
+                        UpdateDialog(
+                            versionName = pendingUpdate.versionName,
+                            notes = pendingUpdate.notes,
+                            sizeMb = (pendingUpdate.sizeBytes / 1_000_000L).toInt(),
+                            progress = updateProgress,
+                            message = updateMessage,
+                            onUpdate = {
+                                updateMessage = null
+                                lifecycleScope.launch {
+                                    try {
+                                        val file = updateFile ?: run {
+                                            updateProgress = 0f
+                                            updates.download(pendingUpdate) { p -> updateProgress = p }
+                                        }
+                                        updateFile = file
+                                        updateProgress = null
+                                        when (updates.install(this@MainActivity, file)) {
+                                            InstallResult.STARTED -> Unit
+                                            InstallResult.NEEDS_PERMISSION -> updateMessage =
+                                                "Autorisez l'installation depuis cette application dans les réglages qui viennent de s'ouvrir, puis revenez et touchez « Mettre à jour »."
+                                            InstallResult.FAILED -> updateMessage = "Installation impossible. Réessayez."
+                                        }
+                                    } catch (e: Exception) {
+                                        updateProgress = null
+                                        updateMessage = "Téléchargement impossible. Vérifiez votre connexion."
+                                    }
+                                }
+                            },
+                            onLater = { update = null }
+                        )
+                    }
+
+                    if (showAvatarPicker) {
+                        val me = auth as? AuthState.SignedIn
+                        com.rummikub.app.ui.account.AvatarPickerDialog(
+                            currentAvatar = me?.avatar,
+                            name = me?.pseudo ?: "",
+                            onPickEmoji = { e -> lifecycleScope.launch { accounts.setEmojiAvatar(e) } },
+                            onPickPhoto = {
+                                pickPhoto.launch(
+                                    androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            onRemove = { lifecycleScope.launch { accounts.removeAvatar() } },
+                            onDismiss = { showAvatarPicker = false }
+                        )
+                    }
+
+                    if (showFriends) {
+                        FriendsDialog(
+                            friends = friends,
+                            onlineIds = onlineFriends,
+                            onAdd = { accounts.addFriend(it) },
+                            onAccept = { accounts.acceptFriend(it) },
+                            onRemove = { accounts.removeFriend(it) },
+                            onRefresh = { accounts.refreshFriends() },
+                            onDismiss = { showFriends = false }
+                        )
+                    }
+
+                    if (showHistory) {
+                        LaunchedEffect(Unit) { accounts.loadHistory() }
+                        HistoryDialog(
+                            history = history,
+                            loading = historyLoading,
+                            myUserId = accounts.myUserId,
+                            onDismiss = { showHistory = false }
+                        )
+                    }
+
+                    pendingInvite?.let { invite ->
+                        InviteDialog(
+                            fromPseudo = invite.fromPseudo,
+                            onAccept = {
+                                pendingInvite = null
+                                lifecycleScope.launch { networkRepository.joinRoom(invite.roomCode, accounts.myPseudo ?: "Ami") }
+                            },
+                            onDecline = { pendingInvite = null }
+                        )
                     }
 
                     if (showLobbyAudio) {

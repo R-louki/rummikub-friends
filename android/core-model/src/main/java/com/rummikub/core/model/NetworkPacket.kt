@@ -270,6 +270,50 @@ sealed class NetworkPacket {
     }
 
     // ==========================================
+    // 6b. ACCOUNTS, FRIENDS PRESENCE, INVITATIONS
+    // ==========================================
+
+    /** Sent right after connecting: proves who the player is (Supabase access token). */
+    @Serializable
+    @SerialName("auth_req")
+    data class AuthRequest(val accessToken: String) : NetworkPacket()
+
+    @Serializable
+    @SerialName("auth_res")
+    data class AuthResponse(
+        val ok: Boolean,
+        val userId: String? = null,
+        val pseudo: String? = null,
+        val avatar: String? = null,
+        val needsPseudo: Boolean = false,
+        val reason: String? = null
+    ) : NetworkPacket()
+
+    @Serializable
+    @SerialName("friends_presence_req")
+    object FriendsPresenceRequest : NetworkPacket()
+
+    @Serializable
+    @SerialName("friends_presence_res")
+    data class FriendsPresenceResponse(val online: List<String> = emptyList()) : NetworkPacket()
+
+    @Serializable
+    @SerialName("invite_friend_req")
+    data class InviteFriendRequest(val friendUserId: String) : NetworkPacket()
+
+    @Serializable
+    @SerialName("invite_res")
+    data class InviteResponse(val friendUserId: String, val delivered: Boolean) : NetworkPacket()
+
+    @Serializable
+    @SerialName("room_invite_evt")
+    data class RoomInviteEvent(
+        val roomCode: String,
+        val fromUserId: String,
+        val fromPseudo: String
+    ) : NetworkPacket()
+
+    // ==========================================
     // 7. ERROR PACKET
     // ==========================================
 
@@ -291,6 +335,7 @@ data class PlayerSummary(
     val isHost: Boolean,
     val isConnected: Boolean,
     val isBot: Boolean = false,
+    val avatar: String? = null,
     val tileCount: Int,
     val hasMadeInitialMeld: Boolean,
     val totalScore: Int = 0,

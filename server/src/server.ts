@@ -2,6 +2,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import { RoomManager } from './network/room-manager.js';
 import { RoomStore } from './network/room-store.js';
+import { SupabaseAccounts, AccountSessions } from './network/accounts.js';
+import { createPacketHandler } from './network/packet-handler.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 
@@ -26,7 +28,42 @@ function buildIceServers(): Array<{ urls: string[]; username?: string; credentia
   return servers;
 }
 
+/** Where the latest APK lives: the GitHub release of the project (stable "latest" link). */
+const APK_URL = process.env.DOWNLOAD_APK_URL
+  ?? 'https://github.com/R-louki/rummikub-friends/releases/latest/download/Rummikub-Friends.apk';
+
+const DOWNLOAD_PAGE = `<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rummikub Friends - Télécharger</title>
+<meta property="og:title" content="Rummikub Friends"><meta property="og:description" content="Jouez au Rummikub entre amis, avec la voix en direct. Téléchargez l'application Android.">
+<style>
+body{margin:0;font-family:system-ui,sans-serif;background:#0c2b18;color:#fff;display:flex;min-height:100vh;align-items:center;justify-content:center}
+.card{max-width:420px;margin:16px;padding:24px;background:#26140b;border:2px solid #3e2316;border-radius:18px;text-align:center}
+h1{margin:0;color:#ffd54f;letter-spacing:3px}p{color:#e0d6cf;line-height:1.5}
+a.btn{display:block;margin:18px 0 8px;padding:16px;background:#e65100;color:#fff;font-weight:700;text-decoration:none;border-radius:12px;font-size:18px}
+ol{text-align:left;color:#cfc4bd;font-size:14px;line-height:1.6;padding-left:20px}small{color:#9a8f88}
+</style></head><body><div class="card">
+<h1>RUMMIKUB</h1><p><b>Friends &amp; Live Voice</b><br>Rummikub entre amis, avec la voix en direct.</p>
+<a class="btn" href="/download.apk">Télécharger pour Android</a>
+<ol><li>Ouvrez ce lien <b>sur votre téléphone Android</b> (dans Chrome si Messenger propose de choisir).</li>
+<li>Appuyez sur « Télécharger », puis ouvrez le fichier.</li>
+<li>Si Android le demande, autorisez l'installation depuis cette source.</li>
+<li>Au premier lancement, connectez-vous avec Google et choisissez un pseudo.</li></ol>
+<small>Les mises à jour suivantes se proposent directement dans l'application.</small>
+</div></body></html>`;
+
 const server = http.createServer((req, res) => {
+  const path = (req.url ?? '/').split('?')[0];
+  if (path === '/download') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' });
+    res.end(DOWNLOAD_PAGE);
+    return;
+  }
+  if (path === '/download.apk') {
+    res.writeHead(302, { Location: APK_URL, 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
   if (req.url?.startsWith('/ice-servers')) {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ iceServers: buildIceServers() }));
@@ -38,8 +75,14 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 const roomStore = new RoomStore();
-const roomManager = new RoomManager(roomStore);
+const accounts = new SupabaseAccounts();
+const sessions = new AccountSessions();
+const roomManager = new RoomManager(roomStore, accounts);
+// REQUIRE_AUTH=1 forces a Google account to play; by default anonymous players are still accepted.
+const requireAuth = process.env.REQUIRE_AUTH === '1';
+const packets = createPacketHandler(roomManager, accounts, sessions, { requireAuth });
 console.log(`[Rummikub Server] Persistance des parties: ${roomStore.enabled ? 'activée (Supabase)' : 'désactivée'}`);
+console.log(`[Rummikub Server] Comptes: ${accounts.enabled ? (requireAuth ? 'activés et obligatoires' : 'activés (optionnels)') : 'désactivés'}`);
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('[WebSocket] Nouvelle connexion entrante');
@@ -47,7 +90,7 @@ wss.on('connection', (ws: WebSocket) => {
   ws.on('message', (data: Buffer | string) => {
     try {
       const packet = JSON.parse(data.toString());
-      handlePacket(ws, packet);
+      packets.handle(ws, packet);
     } catch (err: any) {
       console.error('[WebSocket] Erreur parsing paquet JSON:', err.message);
       ws.send(JSON.stringify({ type: 'error', code: 'INVALID_JSON', message: err.message }));
@@ -55,195 +98,14 @@ wss.on('connection', (ws: WebSocket) => {
   });
 
   ws.on('close', () => {
-    roomManager.handleSocketDisconnect(ws);
+    packets.onClose(ws);
   });
 
   ws.on('error', (err) => {
     console.error('[WebSocket] Erreur socket:', err.message);
-    roomManager.handleSocketDisconnect(ws);
+    packets.onClose(ws);
   });
 });
-
-function handlePacket(ws: WebSocket, packet: any): void {
-  switch (packet.type) {
-    case 'ping': {
-      roomManager.handleClientHeartbeat(ws, packet.clientTimestamp, packet.stateVersionId);
-      break;
-    }
-
-    case 'create_room_req': {
-      const { room, playerId, sessionToken } = roomManager.createRoom(
-        packet.hostName || 'Hôte',
-        ws,
-        packet.config
-      );
-      ws.send(JSON.stringify({
-        type: 'room_joined_res',
-        roomCode: room.roomCode,
-        playerId,
-        sessionToken,
-        isHost: true,
-        config: room.config,
-        players: room.getPlayerSummaries()
-      }));
-      // Against the computer there is nobody to wait for: deal the cards right away.
-      if (room.hasBots) {
-        setTimeout(() => { if (room.status === 'LOBBY') room.startGame(); }, 800).unref?.();
-      }
-      break;
-    }
-
-    case 'join_room_req': {
-      const result = roomManager.joinRoom(packet.roomCode, packet.playerName, ws);
-      if (!result) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          code: 'ROOM_NOT_FOUND_OR_FULL',
-          message: `Impossible de rejoindre le salon ${packet.roomCode}. Salon introuvable, déjà plein ou en cours.`
-        }));
-        return;
-      }
-      const { room, playerId, sessionToken } = result;
-      // Send response to joining player
-      ws.send(JSON.stringify({
-        type: 'room_joined_res',
-        roomCode: room.roomCode,
-        playerId,
-        sessionToken,
-        isHost: false,
-        config: room.config,
-        players: room.getPlayerSummaries()
-      }));
-      // Broadcast player joined to others
-      const joinedPlayer = room.players.get(playerId)!;
-      room.broadcast({
-        type: 'player_joined_evt',
-        player: {
-          id: joinedPlayer.id,
-          name: joinedPlayer.name,
-          isHost: false,
-          isConnected: true,
-          tileCount: 0,
-          hasMadeInitialMeld: false,
-          totalScore: 0,
-          isSpeaking: false,
-          isMuted: false
-        }
-      }, playerId);
-      break;
-    }
-
-    case 'reconnect_req': {
-      const result = roomManager.reconnect(
-        packet.roomCode,
-        packet.playerId,
-        packet.sessionToken,
-        packet.lastKnownVersionId,
-        ws
-      );
-      if (!result || !result.success) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          code: 'RECONNECT_FAILED',
-          message: "Session expirée ou code de salon invalide. Veuillez rejoindre à nouveau."
-        }));
-      }
-      break;
-    }
-
-    case 'leave_room_req': {
-      roomManager.handleLeave(ws);
-      break;
-    }
-
-    case 'start_game_req': {
-      const ctx = roomManager.getRoomBySocket(ws);
-      if (!ctx) return;
-      const player = ctx.room.players.get(ctx.playerId);
-      if (!player || !player.isHost) {
-        ws.send(JSON.stringify({ type: 'error', code: 'UNAUTHORIZED', message: "Seul l'hôte peut lancer la partie." }));
-        return;
-      }
-      if (!ctx.room.startGame()) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          code: 'CANNOT_START',
-          message: ctx.room.status === 'IN_GAME' ? 'La partie est déjà en cours.' : 'Il faut au moins 2 joueurs pour démarrer.'
-        }));
-      }
-      break;
-    }
-
-    case 'update_config_req': {
-      const ctx = roomManager.getRoomBySocket(ws);
-      if (!ctx) return;
-      const player = ctx.room.players.get(ctx.playerId);
-      if (player && player.isHost && ctx.room.status !== 'IN_GAME') {
-        ctx.room.config = { ...ctx.room.config, ...packet.config };
-        ctx.room.broadcast({ type: 'config_updated_evt', config: ctx.room.config });
-      }
-      break;
-    }
-
-    case 'tile_dragged_evt': {
-      const ctx = roomManager.getRoomBySocket(ws);
-      if (ctx && ctx.room.boardState.activePlayerId === ctx.playerId) {
-        // Broadcast movement to all other players in room
-        ctx.room.broadcast({
-          type: 'tile_dragged_evt',
-          playerId: ctx.playerId,
-          tileId: packet.tileId,
-          posX: packet.posX,
-          posY: packet.posY
-        }, ctx.playerId);
-      }
-      break;
-    }
-
-    case 'set_modified_evt': {
-      const ctx = roomManager.getRoomBySocket(ws);
-      if (ctx && ctx.room.boardState.activePlayerId === ctx.playerId) {
-        ctx.room.broadcast({
-          type: 'set_modified_evt',
-          playerId: ctx.playerId,
-          intermediateMelds: packet.intermediateMelds
-        }, ctx.playerId);
-      }
-      break;
-    }
-
-    case 'end_turn_req': {
-      const ctx = roomManager.getRoomBySocket(ws);
-      if (ctx) {
-        ctx.room.handleEndTurn(ctx.playerId, packet.proposedMelds, packet.remainingRackTileIds);
-      }
-      break;
-    }
-
-    case 'draw_tile_req': {
-      const ctx = roomManager.getRoomBySocket(ws);
-      if (ctx) {
-        ctx.room.handleDrawTile(ctx.playerId);
-      }
-      break;
-    }
-
-    case 'voice_signal': {
-      const ctx = roomManager.getRoomBySocket(ws);
-      if (ctx) {
-        if (packet.toPlayerId) {
-          ctx.room.sendTo(packet.toPlayerId, packet);
-        } else {
-          ctx.room.broadcast(packet, ctx.playerId);
-        }
-      }
-      break;
-    }
-
-    default:
-      console.warn('[WebSocket] Paquet non reconnu:', packet.type);
-  }
-}
 
 // Restore saved tables BEFORE accepting connections, so reconnecting players find their game.
 roomManager.restore().finally(() => {

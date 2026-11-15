@@ -2,6 +2,7 @@ import { WebSocket } from 'ws';
 import { GameConfig } from '../models/types.js';
 import { Room } from './room.js';
 import { RoomPersistence } from './room-store.js';
+import { AccountBackend, NoAccounts } from './accounts.js';
 
 /** A client pings every 3 s; we tolerate several missed pings (app in background, weak signal). */
 const HEARTBEAT_TIMEOUT_MS = 20_000;
@@ -20,7 +21,10 @@ export class RoomManager {
 
   private saveTimers = new Map<string, NodeJS.Timeout>();
 
-  constructor(private readonly store: RoomPersistence | null = null) {
+  constructor(
+    private readonly store: RoomPersistence | null = null,
+    private readonly accounts: AccountBackend = new NoAccounts()
+  ) {
     // Heartbeat supervisor (unref'd to not hold event loop)
     setInterval(() => this.superviseHeartbeats(), HEARTBEAT_CHECK_INTERVAL_MS).unref();
   }
@@ -31,6 +35,12 @@ export class RoomManager {
 
   private watch(room: Room): void {
     room.onChange = () => this.scheduleSave(room);
+    // Finished rounds go to the game history of the logged-in players.
+    room.onGameOver = (record) => {
+      if (!this.accounts.enabled) return;
+      this.accounts.saveGame(record).catch((err: any) =>
+        console.error(`[RoomManager] Historique de ${record.roomCode} non enregistré: ${err?.message}`));
+    };
   }
 
   private scheduleSave(room: Room): void {
@@ -95,7 +105,7 @@ export class RoomManager {
     return this.rooms.get(roomCode.toUpperCase());
   }
 
-  createRoom(hostName: string, socket: WebSocket, config?: GameConfig): { room: Room; playerId: string; sessionToken: string } {
+  createRoom(hostName: string, socket: WebSocket, config?: GameConfig, userId?: string, avatar?: string | null): { room: Room; playerId: string; sessionToken: string } {
     const roomCode = this.generateRoomCode();
     const botCount = Math.max(0, Math.min(3, Math.floor(config?.botCount ?? 0)));
     // Against the computer the table is exactly the human + the bots: nobody else can join.
@@ -105,7 +115,7 @@ export class RoomManager {
     this.watch(room);
 
     const playerId = 'P_' + Math.random().toString(36).substring(2, 9);
-    const { sessionToken } = room.addPlayer(playerId, hostName, socket);
+    const { sessionToken } = room.addPlayer(playerId, hostName, socket, userId, avatar);
     if (botCount > 0) room.addBots(botCount);
 
     this.socketToRoom.set(socket, { roomCode, playerId });
@@ -114,14 +124,14 @@ export class RoomManager {
     return { room, playerId, sessionToken };
   }
 
-  joinRoom(roomCode: string, playerName: string, socket: WebSocket): { room: Room; playerId: string; sessionToken: string } | null {
+  joinRoom(roomCode: string, playerName: string, socket: WebSocket, userId?: string, avatar?: string | null): { room: Room; playerId: string; sessionToken: string } | null {
     const room = this.rooms.get((roomCode ?? '').toUpperCase());
     if (!room || !room.isJoinable) {
       return null;
     }
 
     const playerId = 'P_' + Math.random().toString(36).substring(2, 9);
-    const { sessionToken } = room.addPlayer(playerId, playerName, socket);
+    const { sessionToken } = room.addPlayer(playerId, playerName, socket, userId, avatar);
 
     this.socketToRoom.set(socket, { roomCode: room.roomCode, playerId });
     this.cancelEmptyRoomTimer(room.roomCode);

@@ -522,12 +522,7 @@ private fun RibbonPlayer(
                     .border(if (isActiveTurn || isSpeaking) 2.5.dp else 1.dp, borderColor, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = player.name.take(2).uppercase(),
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                com.rummikub.app.ui.account.AvatarContent(player.avatar, player.name, 12.sp)
             }
             if (player.isHost) {
                 Text("👑", fontSize = 10.sp, modifier = Modifier.align(Alignment.TopStart))

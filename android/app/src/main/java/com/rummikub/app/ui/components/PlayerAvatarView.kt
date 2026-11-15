@@ -98,12 +98,7 @@ fun PlayerAvatarView(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = player.name.take(2).uppercase(),
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                com.rummikub.app.ui.account.AvatarContent(player.avatar, player.name, 14.sp)
             }
 
             // Mute overlay badge

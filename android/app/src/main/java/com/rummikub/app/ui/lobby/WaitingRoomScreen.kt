@@ -35,7 +35,10 @@ fun WaitingRoomScreen(
     isHost: Boolean,
     gameConfig: GameConfig,
     onStartGame: () -> Unit,
-    onLeaveRoom: () -> Unit
+    onLeaveRoom: () -> Unit,
+    inviteFriends: List<com.rummikub.core.network.Friend> = emptyList(),
+    onlineFriendIds: Set<String> = emptySet(),
+    onInviteFriend: (com.rummikub.core.network.Friend) -> Unit = {}
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -153,6 +156,16 @@ fun WaitingRoomScreen(
                 }
 
                 Divider(color = WoodBorder)
+
+                // Invite friends (signed-in players): no more codes to dictate
+                if (inviteFriends.any { it.status == com.rummikub.core.network.FriendStatus.ACCEPTED }) {
+                    com.rummikub.app.ui.account.FriendInvitePanel(
+                        friends = inviteFriends,
+                        onlineIds = onlineFriendIds,
+                        onInvite = onInviteFriend
+                    )
+                    Divider(color = WoodBorder)
+                }
 
                 // Rules summary badge
                 Row(

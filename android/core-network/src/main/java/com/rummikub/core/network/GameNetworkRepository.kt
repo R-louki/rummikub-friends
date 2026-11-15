@@ -52,6 +52,28 @@ class GameNetworkRepository(
     private val _gameConfig = MutableStateFlow(GameConfig.STANDARD)
     val gameConfig: StateFlow<GameConfig> = _gameConfig.asStateFlow()
 
+    // ---------- accounts, friends presence, invitations ----------
+
+    /** Gives a fresh Supabase access token (refreshing it when needed), or null for anonymous play. */
+    @Volatile var accessTokenProvider: (suspend () -> String?)? = null
+
+    /** While signed in, keep a connection open even outside a table: friends see us online and invites arrive. */
+    @Volatile var lobbyMode: Boolean = false
+
+    private val _serverAuth = MutableStateFlow<NetworkPacket.AuthResponse?>(null)
+    /** What the game server knows about this phone's account (null until authenticated). */
+    val serverAuth: StateFlow<NetworkPacket.AuthResponse?> = _serverAuth.asStateFlow()
+
+    private val _onlineFriends = MutableStateFlow<Set<String>>(emptySet())
+    /** User ids of the friends currently online. */
+    val onlineFriends: StateFlow<Set<String>> = _onlineFriends.asStateFlow()
+
+    private val _invites = MutableSharedFlow<NetworkPacket.RoomInviteEvent>(extraBufferCapacity = 8)
+    /** Invitations to a friend's table. */
+    val invites: SharedFlow<NetworkPacket.RoomInviteEvent> = _invites.asSharedFlow()
+
+    private var pendingAuth: CompletableDeferred<NetworkPacket.AuthResponse>? = null
+
     private val _lastMove = MutableStateFlow<LastMove?>(null)
     /** The last move of an opponent (null after my own action or a new game). */
     val lastMove: StateFlow<LastMove?> = _lastMove.asStateFlow()
@@ -193,9 +215,11 @@ class GameNetworkRepository(
                 webSocketClient.send(NetworkPacket.LeaveRoomRequest(roomCode = code))
             } catch (_: Exception) {}
         }
-        try {
-            webSocketClient.disconnect()
-        } catch (_: Exception) {}
+        if (!lobbyMode) {
+            try {
+                webSocketClient.disconnect()
+            } catch (_: Exception) {}
+        }
 
         localActionQueue.clear()
         clearPendingAction()
@@ -207,7 +231,11 @@ class GameNetworkRepository(
         _playerRack.value = PlayerRack(playerId = "")
         _players.value = emptyList()
         _gracePeriodCountdown.value = null
-        _connectionStatus.value = ConnectionStatus.Disconnected
+        _connectionStatus.value = if (lobbyMode && webSocketClient.isConnected) ConnectionStatus.Connected else ConnectionStatus.Disconnected
+        if (lobbyMode && webSocketClient.isConnected) {
+            heartbeatManager.start()
+            requestFriendsPresence()
+        }
     }
 
     // ==========================================
@@ -310,6 +338,54 @@ class GameNetworkRepository(
     // FIRST CONNECTION (with server wake-up tolerance)
     // ==========================================
 
+    /**
+     * Identifies this phone to the server with the Supabase access token.
+     * Returns true when the server accepted the account (or when playing anonymously).
+     */
+    suspend fun authenticate(): Boolean {
+        val provider = accessTokenProvider ?: return true
+        val token = try { provider() } catch (_: Exception) { null } ?: return true
+        val waiter = CompletableDeferred<NetworkPacket.AuthResponse>()
+        pendingAuth = waiter
+        return try {
+            webSocketClient.send(NetworkPacket.AuthRequest(token))
+            withTimeout(8_000L) { waiter.await() }.ok
+        } catch (_: Exception) {
+            false
+        } finally {
+            if (pendingAuth === waiter) pendingAuth = null
+        }
+    }
+
+    /** Opens (or keeps) the lobby connection of a signed-in player so that friends and invites work. */
+    suspend fun ensureLobbyConnection() {
+        lobbyMode = true
+        if (webSocketClient.isConnected && _serverAuth.value?.ok == true) return
+        connectAndExecute { requestFriendsPresence() }
+    }
+
+    /** Stops the lobby connection (sign-out). */
+    suspend fun stopLobbyConnection() {
+        lobbyMode = false
+        _serverAuth.value = null
+        _onlineFriends.value = emptySet()
+        if (_roomCode.value == null) {
+            heartbeatManager.stop()
+            try { webSocketClient.disconnect() } catch (_: Exception) {}
+            _connectionStatus.value = ConnectionStatus.Disconnected
+        }
+    }
+
+    suspend fun requestFriendsPresence() {
+        if (webSocketClient.isConnected) {
+            try { webSocketClient.send(NetworkPacket.FriendsPresenceRequest) } catch (_: Exception) {}
+        }
+    }
+
+    suspend fun inviteFriend(friendUserId: String) {
+        sendOrQueue(NetworkPacket.InviteFriendRequest(friendUserId))
+    }
+
     private suspend fun connectAndExecute(block: suspend () -> Unit) {
         connectJob?.cancel()
         val job = scope.launch {
@@ -318,9 +394,15 @@ class GameNetworkRepository(
             _connectionStatus.value = ConnectionStatus.Connecting(attempt, "Connexion au serveur...")
             while (isActive) {
                 try {
-                    webSocketClient.connect(serverUrl)
-                    _connectionStatus.value = ConnectionStatus.Connected
-                    heartbeatManager.start()
+                    if (!(webSocketClient.isConnected && (accessTokenProvider == null || _serverAuth.value?.ok == true))) {
+                        webSocketClient.connect(serverUrl)
+                        _serverAuth.value = null
+                        _connectionStatus.value = ConnectionStatus.Connected
+                        heartbeatManager.start()
+                        authenticate()
+                    } else {
+                        _connectionStatus.value = ConnectionStatus.Connected
+                    }
                     block()
                     return@launch
                 } catch (e: CancellationException) {
@@ -363,8 +445,9 @@ class GameNetworkRepository(
         val playerId = _myPlayerId.value
         val token = _sessionToken.value
 
-        // If not in a room yet, simply fail
-        if (room == null || playerId == null || token == null) {
+        // Outside a table there is nothing to resume, unless the signed-in lobby connection must be kept alive
+        val inRoom = room != null && playerId != null && token != null
+        if (!inRoom && !lobbyMode) {
             _connectionStatus.value = ConnectionStatus.Disconnected
             return
         }
@@ -383,20 +466,27 @@ class GameNetworkRepository(
 
                 try {
                     webSocketClient.connect(serverUrl)
+                    _serverAuth.value = null
                     _connectionStatus.value = ConnectionStatus.Connected
-
-                    // Send Reconnect packet with last known state version ID
-                    val lastKnownVersion = _boardState.value.versionId
-                    webSocketClient.send(
-                        NetworkPacket.ReconnectRequest(
-                            roomCode = room,
-                            playerId = playerId,
-                            sessionToken = token,
-                            lastKnownVersionId = lastKnownVersion
-                        )
-                    )
-
                     heartbeatManager.start()
+
+                    // Who we are first (friends presence, invitations, history), then the table
+                    authenticate()
+
+                    if (inRoom) {
+                        // Send Reconnect packet with last known state version ID
+                        val lastKnownVersion = _boardState.value.versionId
+                        webSocketClient.send(
+                            NetworkPacket.ReconnectRequest(
+                                roomCode = room!!,
+                                playerId = playerId!!,
+                                sessionToken = token!!,
+                                lastKnownVersionId = lastKnownVersion
+                            )
+                        )
+                    } else {
+                        requestFriendsPresence()
+                    }
 
                     // Flush queued actions
                     while (localActionQueue.isNotEmpty()) {
@@ -643,6 +733,26 @@ class GameNetworkRepository(
 
             is NetworkPacket.VoiceSignalPacket -> {
                 _voiceSignals.emit(packet)
+            }
+
+            is NetworkPacket.AuthResponse -> {
+                _serverAuth.value = if (packet.ok) packet else null
+                pendingAuth?.complete(packet)
+            }
+
+            is NetworkPacket.FriendsPresenceResponse -> {
+                _onlineFriends.value = packet.online.toSet()
+            }
+
+            is NetworkPacket.RoomInviteEvent -> {
+                _invites.emit(packet)
+            }
+
+            is NetworkPacket.InviteResponse -> {
+                _errors.emit(
+                    if (packet.delivered) "Invitation envoyée."
+                    else "Cet ami n'est pas en ligne pour le moment."
+                )
             }
 
             is NetworkPacket.ErrorResponse -> {
