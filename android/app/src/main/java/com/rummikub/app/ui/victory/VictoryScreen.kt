@@ -59,6 +59,7 @@ fun VictoryScreen(
     roundNumber: Int,
     isHost: Boolean,
     onNextRound: () -> Unit,
+    onRematch: () -> Unit = {},
     onEndGame: () -> Unit,
     onLeave: () -> Unit,
     finalStandings: List<FinalStanding>? = null,
@@ -173,6 +174,7 @@ fun VictoryScreen(
                         }
                         isHost -> {
                             ChoiceButton("▶  Prochaine manche", "les scores s'additionnent", Color(0xFFE65100), onNextRound)
+                            ChoiceButton("🔁  Nouvelle partie", "mêmes joueurs, scores à zéro", Color(0xFF6A4FB8), onRematch)
                             ChoiceButton("🏁  Terminer la partie", "classement final pour tous", Color(0xFF455A64), onEndGame)
                             TextButton(onClick = onLeave) {
                                 Text("Quitter la table", fontSize = 11.sp, color = Color(0xFFFFCC80))

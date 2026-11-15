@@ -206,9 +206,9 @@ class GameNetworkRepository(
         }
     }
 
-    suspend fun startGame() {
+    suspend fun startGame(newSession: Boolean = false) {
         val code = _roomCode.value ?: return
-        sendOrQueue(NetworkPacket.StartGameRequest(roomCode = code))
+        sendOrQueue(NetworkPacket.StartGameRequest(roomCode = code, newSession = newSession))
     }
 
     /** Host only: end the game (after a finished round) and show the final ranking to everybody. */

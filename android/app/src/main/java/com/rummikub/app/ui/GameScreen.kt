@@ -76,6 +76,7 @@ fun GameScreen(
     val liveMelds by networkRepository.liveMelds.collectAsState()
     val actionInFlight by networkRepository.actionInFlight.collectAsState()
     val drawnTileId by networkRepository.lastDrawnTileId.collectAsState()
+    val canUndo by turnController.canUndo.collectAsState()
 
     // Working (local, in-progress) state of the turn
     val workingBoard by turnController.board.collectAsState()
@@ -322,6 +323,17 @@ fun GameScreen(
                     )
                 }
                 RoundAction(
+                    glyph = "↶",
+                    enabled = isMyTurn && canUndo,
+                    container = Color(0xFF6D4C41),
+                    size = 40.dp,
+                    glyphSize = 20.sp,
+                    textColor = Color(0xFFFFE0B2)
+                ) {
+                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    turnController.undoLast()
+                }
+                RoundAction(
                     glyph = "↺",
                     enabled = isMyTurn && summary.isDirty,
                     container = Color(0xFF5D4037),
@@ -388,6 +400,26 @@ fun GameScreen(
                         DropdownMenuItem(
                             text = { com.rummikub.app.ui.components.NetworkIndicator(connectionStatus, latencyMs) },
                             onClick = { menuOpen = false }
+                        )
+                        val prefs = androidx.compose.ui.platform.LocalContext.current
+                            .getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+                        val levelNames = listOf("Faible", "Normale", "Élevée")
+                        val micLevel by audioController.voiceChat.micSensitivity.collectAsState()
+                        DropdownMenuItem(
+                            text = { Text("🎙️ Sensibilité micro : ${levelNames[micLevel]}") },
+                            onClick = {
+                                val next = (micLevel + 1) % 3
+                                audioController.voiceChat.setMicSensitivity(next)
+                                prefs.edit().putInt("mic", next).apply()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("✋ Sensibilité glissement : ${levelNames[com.rummikub.app.ui.dnd.DragSettings.level]}") },
+                            onClick = {
+                                val next = (com.rummikub.app.ui.dnd.DragSettings.level + 1) % 3
+                                com.rummikub.app.ui.dnd.DragSettings.level = next
+                                prefs.edit().putInt("drag", next).apply()
+                            }
                         )
                         DropdownMenuItem(
                             text = { Text("🎨 Thème") },

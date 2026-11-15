@@ -68,6 +68,26 @@ class TurnController(
     private val _selectedTileIds = MutableStateFlow<List<String>>(emptyList())
     val selectedTileIds: StateFlow<List<String>> = _selectedTileIds.asStateFlow()
 
+    /** Previous (table, rack) states of this turn, for "undo the last move". */
+    private val history = ArrayDeque<Pair<BoardState, PlayerRack>>()
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
+
+    private fun clearHistory() {
+        history.clear()
+        _canUndo.value = false
+    }
+
+    /** Takes back only the last tile move of this turn (the other moves stay). */
+    fun undoLast() {
+        val previous = history.removeLastOrNull() ?: return
+        _board.value = previous.first
+        _rack.value = previous.second
+        _selectedTileIds.value = emptyList()
+        broadcastWorkingBoard()
+        _canUndo.value = history.isNotEmpty()
+    }
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
@@ -107,6 +127,7 @@ class TurnController(
                     snapshotBoard = server
                     _board.value = server
                     _selectedTileIds.value = emptyList()
+                    clearHistory()
                 }
                 dropStaleWork()
             }
@@ -123,6 +144,7 @@ class TurnController(
                 snapshotRack = server.copy(tiles = merged)
                 _rack.value = snapshotRack
                 _selectedTileIds.value = emptyList()
+                clearHistory()
                 dropStaleWork()
             }
         }
@@ -137,6 +159,7 @@ class TurnController(
         val allowed = snapshotBoard.allTileIds + snapshotRack.tiles.map { it.id }
         val working = _board.value.allTileIds + _rack.value.tiles.map { it.id }
         if (!allowed.containsAll(working)) {
+            clearHistory()
             _board.value = snapshotBoard
             _rack.value = snapshotRack
             _selectedTileIds.value = emptyList()
@@ -310,6 +333,9 @@ class TurnController(
     }
 
     private fun commitWorkingState(board: BoardState, rack: PlayerRack, movedTileId: String) {
+        history.addLast(_board.value to _rack.value)
+        if (history.size > 60) history.removeFirst()
+        _canUndo.value = true
         _board.value = board.copy(melds = board.melds.filter { it.isNotEmpty })
         broadcastWorkingBoard()
         _rack.value = rack
@@ -382,6 +408,7 @@ class TurnController(
 
     /** "Annuler Coup": restore the start-of-turn snapshot. */
     fun resetTurn() {
+        clearHistory()
         _board.value = snapshotBoard
         broadcastWorkingBoard()
         _rack.value = snapshotRack

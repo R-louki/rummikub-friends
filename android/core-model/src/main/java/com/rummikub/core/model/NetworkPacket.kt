@@ -108,7 +108,9 @@ sealed class NetworkPacket {
     @Serializable
     @SerialName("start_game_req")
     data class StartGameRequest(
-        val roomCode: String
+        val roomCode: String,
+        /** Rematch: same table and players, scores back to zero. */
+        val newSession: Boolean = false
     ) : NetworkPacket()
 
     @Serializable

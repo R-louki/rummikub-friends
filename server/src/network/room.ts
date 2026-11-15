@@ -458,9 +458,15 @@ export class Room {
   // GAME LIFECYCLE
   // ==========================================
 
-  startGame(): boolean {
+  /** [newSession]: rematch with the same players, scores and round counter back to zero. */
+  startGame(newSession = false): boolean {
     if (this.status === 'IN_GAME') return false;
     if (this.players.size < 2) return false;
+    if (newSession) {
+      this.roundNumber = 0;
+      this.totalScores.clear();
+      this.roundsWon.clear();
+    }
 
     this.clearTurnTimers();
     this.clearGraceTimers();

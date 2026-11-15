@@ -467,14 +467,28 @@ fun HistoryDialog(
                     IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) { Text("✕", color = Color.White, fontSize = 14.sp) }
                 }
                 if (history.isNotEmpty()) {
-                    Row(
+                    val played = myRows.size.coerceAtLeast(1)
+                    val rate = wins * 100 / played
+                    val best = myRows.maxOfOrNull { it.roundDelta } ?: 0
+                    // Current winning streak (history is newest first)
+                    var streak = 0
+                    for (r in myRows) { if (r.isWinner) streak++ else break }
+                    val vsPc = history.count { it.vsComputer }
+                    Column(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0x33FFD54F)).padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text("${history.size} manches", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                        Text("🏆 $wins victoires", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                        Text("${if (points > 0) "+" else ""}$points pts", fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                            color = if (points >= 0) Color(0xFF69F0AE) else Color(0xFFFF8A80))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            Text("${history.size} manches", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("🏆 $wins victoires ($rate %)", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("${if (points > 0) "+" else ""}$points pts", fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                color = if (points >= 0) Color(0xFF69F0AE) else Color(0xFFFF8A80))
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            Text("⭐ meilleure manche : ${if (best > 0) "+" else ""}$best", fontSize = 11.sp, color = Color(0xFFFFE082))
+                            Text("🔥 série : $streak", fontSize = 11.sp, color = Color(0xFFFFE082))
+                            Text("🤖 $vsPc · 👥 ${history.size - vsPc}", fontSize = 11.sp, color = Color(0xFFFFE082))
+                        }
                     }
                 }
                 when {

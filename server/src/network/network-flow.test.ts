@@ -56,6 +56,29 @@ test('Room Network Flow: Create, Join, Deal 14 tiles and Start Game', () => {
   room.dispose();
 });
 
+test('Room: a rematch resets the scores and the round counter, a normal next round keeps them', () => {
+  const room = new Room('REMA01');
+  room.addPlayer('P1', 'Alice', asWs(ws()));
+  room.addPlayer('P2', 'Bob', asWs(ws()));
+  room.startGame();
+  const r: any = room;
+  r.totalScores.set('P1', 40);
+  r.totalScores.set('P2', -40);
+  r.roundsWon.set('P1', 1);
+  r.status = 'FINISHED';
+
+  assert.strictEqual(room.startGame(), true); // next round: scores are kept
+  assert.strictEqual(r.roundNumber, 2);
+  assert.strictEqual(r.totalScores.get('P1'), 40);
+
+  r.status = 'FINISHED';
+  assert.strictEqual(room.startGame(true), true); // rematch
+  assert.strictEqual(r.roundNumber, 1);
+  assert.strictEqual(r.totalScores.size, 0);
+  assert.strictEqual(r.roundsWon.size, 0);
+  room.dispose();
+});
+
 test('Room Network Flow: Grace Period on active player disconnect and reconnect (full snapshot)', () => {
   const room = new Room('TEST02');
   const ws1 = ws();

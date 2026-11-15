@@ -235,7 +235,7 @@ export function createPacketHandler(
           send(ws, { type: 'error', code: 'UNAUTHORIZED', message: "Seul l'hôte peut lancer la partie." });
           return;
         }
-        if (!ctx.room.startGame()) {
+        if (!ctx.room.startGame(packet.newSession === true)) {
           send(ws, {
             type: 'error',
             code: 'CANNOT_START',

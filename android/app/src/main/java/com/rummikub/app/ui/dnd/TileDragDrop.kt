@@ -26,6 +26,12 @@ import androidx.compose.ui.draganddrop.toAndroidDragEvent
 
 private const val TILE_CLIP_LABEL = "rummikub_tile"
 
+/** How easily a rack tile starts to move under the finger: 0 = low, 1 = normal, 2 = high. */
+object DragSettings {
+    var level by mutableStateOf(1)
+    val slopFactor: Float get() = when (level) { 0 -> 2.2f; 2 -> 0.45f; else -> 1f }
+}
+
 /**
  * Extracts the tile id carried by a drag-and-drop event started with [tileDragSource].
  */
@@ -63,7 +69,7 @@ fun Modifier.tileDragSource(
                         break
                     }
                     val moved = change.position - down.position
-                    if (!dragged && moved.getDistance() > viewConfiguration.touchSlop) {
+                    if (!dragged && moved.getDistance() > viewConfiguration.touchSlop * DragSettings.slopFactor) {
                         dragged = true
                         startTransfer(
                             DragAndDropTransferData(clipData = ClipData.newPlainText(TILE_CLIP_LABEL, tileId))

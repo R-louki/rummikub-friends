@@ -68,7 +68,21 @@ class WebRtcVoiceChat(
     override val isLocalSpeaking: StateFlow<Boolean> = _isLocalSpeaking.asStateFlow()
 
     // VAD Configuration: Threshold in dB (-45 dB typical for speech), Hangover time (400ms)
-    private val vadThresholdDb = -45f
+    @Volatile private var vadThresholdDb = -45f
+
+    /** 0 = low (ignores background noise), 1 = normal, 2 = high (picks up a quiet voice). */
+    private val _micSensitivity = MutableStateFlow(1)
+    val micSensitivity: StateFlow<Int> = _micSensitivity.asStateFlow()
+
+    fun setMicSensitivity(level: Int) {
+        val l = level.coerceIn(0, 2)
+        _micSensitivity.value = l
+        vadThresholdDb = when (l) {
+            0 -> -36f
+            2 -> -52f
+            else -> -45f
+        }
+    }
     private val vadHangoverMs = 400L
     private var lastSpeakingTimeMs = 0L
     private var vadHangoverJob: Job? = null

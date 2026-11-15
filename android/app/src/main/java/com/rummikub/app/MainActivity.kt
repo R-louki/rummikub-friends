@@ -128,7 +128,10 @@ class MainActivity : ComponentActivity() {
         // No ambient music by default: the player picks a track in "Musique & audio".
         // The volume is preset so the chosen track is audible but soft.
         audioController.setMusicVolume(0.30f)
-        com.rummikub.app.ui.theme.ThemeState.select(getSharedPreferences("settings", MODE_PRIVATE).getInt("theme", 0))
+        val settings = getSharedPreferences("settings", MODE_PRIVATE)
+        com.rummikub.app.ui.theme.ThemeState.select(settings.getInt("theme", 0))
+        com.rummikub.app.ui.dnd.DragSettings.level = settings.getInt("drag", 1)
+        audioController.voiceChat.setMicSensitivity(settings.getInt("mic", 1))
 
         val alreadyGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         micPermissionGranted.value = alreadyGranted
@@ -456,6 +459,7 @@ class MainActivity : ComponentActivity() {
                                     finalStandings = finalStandings,
                                     roundsPlayed = roundsPlayed,
                                     onNextRound = { lifecycleScope.launch { networkRepository.startGame() } },
+                                    onRematch = { lifecycleScope.launch { networkRepository.startGame(newSession = true) } },
                                     onEndGame = { lifecycleScope.launch { networkRepository.endSession() } },
                                     onLeave = {
                                         finalStandings = null

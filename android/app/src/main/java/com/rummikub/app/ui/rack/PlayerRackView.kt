@@ -41,7 +41,7 @@ private val BigW = 40.dp
 private val BigH = 54.dp
 private val SmallW = 30.dp
 private val SmallH = 40.dp
-private val ToolsWidth = 78.dp
+private val ToolsWidth = 104.dp
 
 /**
  * Player Rack (Chevalet).
@@ -214,8 +214,8 @@ fun PlayerRackView(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    RackTool("🌈", onSortRuns)
-                    RackTool("🔢", onSortGroups)
+                    RackTool("789", onSortRuns)
+                    RackTool("999", onSortGroups)
                     if (!single) RackTool(if (collapsed) "▴" else "▾", onToggleCollapsed)
                 }
             }
@@ -227,12 +227,14 @@ fun PlayerRackView(
 private fun RackTool(glyph: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(22.dp)
-            .clip(RoundedCornerShape(11.dp))
+            .height(24.dp)
+            .widthIn(min = 24.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(Color(0xCC1B0E09))
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center
-    ) { Text(glyph, color = Color(0xFFFFCC80), fontSize = 11.sp) }
+    ) { Text(glyph, color = Color(0xFFFFCC80), fontSize = 10.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1) }
 }
 
 @Composable
