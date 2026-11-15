@@ -60,6 +60,10 @@ class TurnController(
     private val _rack = MutableStateFlow(PlayerRack(playerId = ""))
     val rack: StateFlow<PlayerRack> = _rack.asStateFlow()
 
+    /** Bumped when the rack is re-sorted so the UI re-lays the tiles out (free placement is UI-only). */
+    private val _rackEpoch = MutableStateFlow(0)
+    val rackEpoch: StateFlow<Int> = _rackEpoch.asStateFlow()
+
     /** Selected tiles, in selection order (tap mode supports multi-selection). */
     private val _selectedTileIds = MutableStateFlow<List<String>>(emptyList())
     val selectedTileIds: StateFlow<List<String>> = _selectedTileIds.asStateFlow()
@@ -259,8 +263,15 @@ class TurnController(
         return meld.tiles.indexOfFirst { !it.isJoker && it.color == tile.color && it.number == tile.number }
     }
 
+    /** Lets the other players watch the table being rearranged, move by move. */
+    private fun broadcastWorkingBoard() {
+        val melds = _board.value.melds
+        scope.launch { repository.sendSetModified(melds) }
+    }
+
     private fun commitWorkingState(board: BoardState, rack: PlayerRack, movedTileId: String) {
         _board.value = board.copy(melds = board.melds.filter { it.isNotEmpty })
+        broadcastWorkingBoard()
         _rack.value = rack
         _selectedTileIds.value = _selectedTileIds.value - movedTileId
     }
@@ -301,11 +312,13 @@ class TurnController(
     fun sortByRun() {
         _rack.value = _rack.value.sortedByRun()
         snapshotRack = snapshotRack.sortedByRun()
+        _rackEpoch.value += 1
     }
 
     fun sortByGroup() {
         _rack.value = _rack.value.sortedByGroup()
         snapshotRack = snapshotRack.sortedByGroup()
+        _rackEpoch.value += 1
     }
 
     // ==========================================
@@ -315,6 +328,7 @@ class TurnController(
     /** "Annuler Coup": restore the start-of-turn snapshot. */
     fun resetTurn() {
         _board.value = snapshotBoard
+        broadcastWorkingBoard()
         _rack.value = snapshotRack
         _selectedTileIds.value = emptyList()
     }

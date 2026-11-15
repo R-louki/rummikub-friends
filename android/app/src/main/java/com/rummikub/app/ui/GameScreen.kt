@@ -67,10 +67,13 @@ fun GameScreen(
     val latencyMs by networkRepository.latencyMs.collectAsState()
     val graceCountdown by networkRepository.gracePeriodCountdown.collectAsState()
     val lastMove by networkRepository.lastMove.collectAsState()
+    val liveMelds by networkRepository.liveMelds.collectAsState()
+    val actionInFlight by networkRepository.actionInFlight.collectAsState()
 
     // Working (local, in-progress) state of the turn
     val workingBoard by turnController.board.collectAsState()
     val workingRack by turnController.rack.collectAsState()
+    val rackEpoch by turnController.rackEpoch.collectAsState()
     val selectedList by turnController.selectedTileIds.collectAsState()
     val selectedTileIds = remember(selectedList) { selectedList.toSet() }
     val newTileIds by turnController.newBoardTileIds.collectAsState()
@@ -195,31 +198,8 @@ fun GameScreen(
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Connection, draw pile, room code
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when (connectionStatus) {
-                                    is ConnectionStatus.Connected -> StatusConnected
-                                    is ConnectionStatus.Reconnecting -> StatusReconnecting
-                                    else -> StatusDisconnected
-                                }
-                            )
-                    )
-                    Text(
-                        text = when (connectionStatus) {
-                            is ConnectionStatus.Connected -> "${latencyMs}ms"
-                            is ConnectionStatus.Reconnecting -> "Reconnexion"
-                            else -> "Hors-ligne"
-                        },
-                        color = Color(0xBBFFFFFF),
-                        fontSize = 9.sp,
-                        maxLines = 1
-                    )
-                }
+                // Connection quality, draw pile, room code
+                com.rummikub.app.ui.components.NetworkIndicator(connectionStatus, latencyMs)
                 Text("Pioche ${serverBoard.drawPileCount}", color = Color(0xBBFFFFFF), fontSize = 9.sp)
                 Text(
                     text = roomCode ?: "----",
@@ -278,8 +258,10 @@ fun GameScreen(
                     )
                 }
 
+                // While another player is arranging the table, show their moves live
+                val shownBoard = if (!isMyTurn && liveMelds != null) workingBoard.copy(melds = liveMelds!!) else workingBoard
                 BoardGrid(
-                    boardState = workingBoard,
+                    boardState = shownBoard,
                     isMyTurn = isMyTurn,
                     newTileIds = newTileIds,
                     selectedTileIds = selectedTileIds,
@@ -306,6 +288,7 @@ fun GameScreen(
 
                 PlayerRackView(
                     rack = workingRack,
+                    layoutEpoch = rackEpoch,
                     isMyTurn = isMyTurn,
                     selectedTileIds = selectedTileIds,
                     onTileTapped = { tile ->
@@ -333,8 +316,8 @@ fun GameScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 RibbonButton(
-                    label = "✓ Valider",
-                    enabled = isMyTurn,
+                    label = if (actionInFlight) "⏳ Envoi…" else "✓ Valider",
+                    enabled = isMyTurn && !actionInFlight,
                     container = Color(0xFF2E7D32),
                     height = 54.dp,
                     fontSize = 13.sp
@@ -343,8 +326,8 @@ fun GameScreen(
                     if (turnController.commitTurn()) audioController.onTurnSuccess()
                 }
                 RibbonButton(
-                    label = "+1 Piocher",
-                    enabled = isMyTurn,
+                    label = if (actionInFlight) "⏳ …" else "+1 Piocher",
+                    enabled = isMyTurn && !actionInFlight,
                     container = Color(0xFFE65100),
                     height = 44.dp
                 ) {

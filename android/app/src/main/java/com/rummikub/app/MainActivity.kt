@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import android.widget.Toast
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,7 @@ import com.rummikub.app.ui.GameScreen
 import com.rummikub.app.ui.lobby.LobbyScreen
 import com.rummikub.app.ui.lobby.WaitingRoomScreen
 import com.rummikub.app.ui.theme.RummikubTheme
+import com.rummikub.app.ui.victory.FinalStanding
 import com.rummikub.app.ui.victory.PlayerEndScore
 import com.rummikub.app.ui.victory.VictoryScreen
 import com.rummikub.core.audio.AudioController
@@ -78,8 +80,18 @@ class MainActivity : ComponentActivity() {
         if (uris.isNotEmpty()) audioBridge.library.add(uris)
     }
 
-    private val pickPhoto = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) lifecycleScope.launch { accounts.setPhotoAvatar(this@MainActivity, uri) }
+    // Photo to frame (set once the picked image is decoded); GetContent works on every device,
+    // with or without the system photo picker.
+    private val cropBitmap = mutableStateOf<android.graphics.Bitmap?>(null)
+
+    private val pickPhoto = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            val bmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.rummikub.app.account.ImageUtils.loadForCrop(this@MainActivity, uri)
+            }
+            if (bmp != null) cropBitmap.value = bmp
+            else Toast.makeText(this@MainActivity, "Cette image ne peut pas être lue.", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private val micPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -96,7 +108,7 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
 
         // Cloud Authoritative Server on Render (accessible worldwide by any phone)
-        val serverWsUrl = "wss://rummikub-friends.onrender.com"
+        val serverWsUrl = BuildConfig.SERVER_URL
 
         networkRepository = GameNetworkRepository(serverUrl = serverWsUrl)
         updates = UpdateManager(this)
@@ -113,9 +125,9 @@ class MainActivity : ComponentActivity() {
         // Wake the (free-tier) server up right away so creating a room is fast
         networkRepository.warmUpServer()
 
-        // Soft ambience by default
+        // No ambient music by default: the player picks a track in "Musique & audio".
+        // The volume is preset so the chosen track is audible but soft.
         audioController.setMusicVolume(0.30f)
-        audioController.playTrack(FocusMusicTrack.DEFAULT_PLAYLIST.first())
 
         val alreadyGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         micPermissionGranted.value = alreadyGranted
@@ -134,11 +146,15 @@ class MainActivity : ComponentActivity() {
                 val auth by accounts.auth.collectAsState()
                 val friends by accounts.friends.collectAsState()
                 val onlineFriends by networkRepository.onlineFriends.collectAsState()
+                val lastSeen by accounts.lastSeen.collectAsState()
                 val history by accounts.history.collectAsState()
                 val historyLoading by accounts.historyLoading.collectAsState()
                 var showFriends by remember { mutableStateOf(false) }
                 var showHistory by remember { mutableStateOf(false) }
                 var showAvatarPicker by remember { mutableStateOf(false) }
+                // Friends already invited to the current table (reset for each new table)
+                var invitedIds by remember { mutableStateOf(setOf<String>()) }
+                LaunchedEffect(roomCode) { invitedIds = emptySet() }
 
                 // Built-in update (direct APK only): checked once, a few seconds after the start
                 var update by remember { mutableStateOf<ReleaseInfo?>(null) }
@@ -157,21 +173,39 @@ class MainActivity : ComponentActivity() {
                 var winnerName by remember { mutableStateOf("") }
                 var isMeWinner by remember { mutableStateOf(false) }
                 var roundNumber by remember { mutableStateOf(1) }
+                var finalStandings by remember { mutableStateOf<List<FinalStanding>?>(null) }
+                var roundsPlayed by remember { mutableStateOf(1) }
 
                 val snackbarHostState = remember { SnackbarHostState() }
                 var showQuitDialog by remember { mutableStateOf(false) }
+                var showExitAppDialog by remember { mutableStateOf(false) }
+                // "Création de la table..." while the server answers (the lobby must never look frozen)
+                var busyMessage by remember { mutableStateOf<String?>(null) }
+                val latencyMs by networkRepository.latencyMs.collectAsState()
 
                 // Back button: never drops the player out of the app by accident.
                 //  - in game: ask before leaving the table
                 //  - waiting room / victory: leave the room and go back to the lobby
                 //  - lobby: cancel a connection in progress, otherwise the system closes the app
-                BackHandler(enabled = currentScreen != AppScreen.LOBBY || connectionStatus is com.rummikub.core.network.ConnectionStatus.Connecting || showLobbyAudio) {
+                BackHandler(enabled = true) {
                     when {
                         showLobbyAudio -> showLobbyAudio = false
+                        busyMessage != null -> { busyMessage = null; networkRepository.cancelConnecting() }
                         currentScreen == AppScreen.IN_GAME -> showQuitDialog = true
-                        currentScreen == AppScreen.LOBBY -> networkRepository.cancelConnecting()
+                        currentScreen == AppScreen.LOBBY ->
+                            if (connectionStatus is com.rummikub.core.network.ConnectionStatus.Connecting) networkRepository.cancelConnecting()
+                            else showExitAppDialog = true
                         else -> lifecycleScope.launch { networkRepository.leaveRoom() }
                     }
+                }
+                if (showExitAppDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showExitAppDialog = false },
+                        title = { Text("Quitter le jeu ?") },
+                        text = { Text("Voulez-vous vraiment quitter Rummikub Friends ?") },
+                        confirmButton = { TextButton(onClick = { showExitAppDialog = false; finish() }) { Text("Quitter") } },
+                        dismissButton = { TextButton(onClick = { showExitAppDialog = false }) { Text("Rester") } }
+                    )
                 }
                 if (showQuitDialog) {
                     AlertDialog(
@@ -192,6 +226,7 @@ class MainActivity : ComponentActivity() {
 
                 // Room joined -> waiting room; room left (or lost) -> lobby
                 LaunchedEffect(roomCode) {
+                    if (roomCode != null) busyMessage = null
                     if (roomCode == null) {
                         if (currentScreen != AppScreen.LOBBY) currentScreen = AppScreen.LOBBY
                     } else {
@@ -218,8 +253,11 @@ class MainActivity : ComponentActivity() {
                         winnerName = evt.winnerName
                         roundNumber = evt.roundNumber
                         isMeWinner = evt.winnerId == networkRepository.myPlayerId.value
+                        finalStandings = null
+                        val avatars = networkRepository.players.value.associate { it.id to it.avatar }
                         victoryScores = evt.scores.map { s ->
                             PlayerEndScore(
+                                avatar = avatars[s.playerId],
                                 playerId = s.playerId,
                                 playerName = s.playerName,
                                 isWinner = s.isWinner,
@@ -233,9 +271,20 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // The host ended the whole game: final ranking of all the cumulated rounds
+                LaunchedEffect(Unit) {
+                    networkRepository.sessionOverEvents.collect { evt ->
+                        winnerName = evt.winnerName
+                        roundsPlayed = evt.roundsPlayed
+                        finalStandings = evt.standings.map { FinalStanding(it.playerName, it.totalScore, it.roundsWon, it.avatar) }
+                        currentScreen = AppScreen.VICTORY
+                    }
+                }
+
                 // Server errors (room not found, unauthorized, reconnect failed...)
                 LaunchedEffect(Unit) {
                     networkRepository.errors.collect { message ->
+                        busyMessage = null
                         snackbarHostState.showSnackbar(
                             message = message,
                             withDismissAction = true,
@@ -327,17 +376,21 @@ class MainActivity : ComponentActivity() {
                                 LobbyScreen(
                                     connectionStatus = connectionStatus,
                                     onCreateRoom = { hostName, config ->
+                                        busyMessage = if (config.botCount > 0) "Préparation de la partie..." else "Création de la table..."
                                         lifecycleScope.launch {
                                             networkRepository.createRoom(hostName, config)
                                         }
                                     },
                                     onJoinRoom = { code, playerName ->
+                                        busyMessage = "Connexion à la table..."
                                         lifecycleScope.launch {
                                             networkRepository.joinRoom(code, playerName)
                                         }
                                     },
+                                    latencyMs = latencyMs,
+                                    onRetryConnection = { lifecycleScope.launch { networkRepository.ensureLobbyConnection() } },
                                     onCancelConnecting = { networkRepository.cancelConnecting() },
-                                    startingMessage = if (roomCode != null && gameConfig.botCount > 0)
+                                    startingMessage = busyMessage ?: if (roomCode != null && gameConfig.botCount > 0)
                                         "Préparation de la partie contre l'ordinateur..." else null,
                                     onOpenAudio = { showLobbyAudio = true },
                                     accountPseudo = (a as? AuthState.SignedIn)?.pseudo,
@@ -364,9 +417,17 @@ class MainActivity : ComponentActivity() {
                                     onLeaveRoom = {
                                         lifecycleScope.launch { networkRepository.leaveRoom() }
                                     },
+                                    connectionStatus = connectionStatus,
+                                    latencyMs = latencyMs,
                                     inviteFriends = friends,
                                     onlineFriendIds = onlineFriends,
-                                    onInviteFriend = { f -> lifecycleScope.launch { networkRepository.inviteFriend(f.userId) } }
+                                    lastSeen = lastSeen,
+                                    invitedIds = invitedIds,
+                                    signedIn = a is AuthState.SignedIn,
+                                    onInviteFriend = { f ->
+                                        invitedIds = invitedIds + f.userId
+                                        lifecycleScope.launch { networkRepository.inviteFriend(f.userId) }
+                                    }
                                 )
                             }
 
@@ -387,15 +448,13 @@ class MainActivity : ComponentActivity() {
                                     winnerName = winnerName,
                                     isMeWinner = isMeWinner,
                                     roundNumber = roundNumber,
-                                    onPlayAgain = {
-                                        if (gameConfig.botCount > 0) {
-                                            // Computer table: deal again right away, no waiting room
-                                            lifecycleScope.launch { networkRepository.startGame() }
-                                        } else {
-                                            currentScreen = AppScreen.WAITING_ROOM
-                                        }
-                                    },
-                                    onBackToLobby = {
+                                    isHost = isHost,
+                                    finalStandings = finalStandings,
+                                    roundsPlayed = roundsPlayed,
+                                    onNextRound = { lifecycleScope.launch { networkRepository.startGame() } },
+                                    onEndGame = { lifecycleScope.launch { networkRepository.endSession() } },
+                                    onLeave = {
+                                        finalStandings = null
                                         lifecycleScope.launch { networkRepository.leaveRoom() }
                                     }
                                 )
@@ -438,17 +497,30 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
+                    val toCrop by cropBitmap
+                    toCrop?.let { bmp ->
+                        com.rummikub.app.ui.account.AvatarCropDialog(
+                            bitmap = bmp,
+                            onCancel = { cropBitmap.value = null },
+                            onConfirm = { l, t, side ->
+                                cropBitmap.value = null
+                                lifecycleScope.launch {
+                                    val jpeg = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                        com.rummikub.app.account.ImageUtils.cropToJpeg(bmp, l, t, side)
+                                    }
+                                    accounts.setPhotoAvatarBytes(jpeg)
+                                }
+                            }
+                        )
+                    }
+
                     if (showAvatarPicker) {
                         val me = auth as? AuthState.SignedIn
                         com.rummikub.app.ui.account.AvatarPickerDialog(
                             currentAvatar = me?.avatar,
                             name = me?.pseudo ?: "",
                             onPickEmoji = { e -> lifecycleScope.launch { accounts.setEmojiAvatar(e) } },
-                            onPickPhoto = {
-                                pickPhoto.launch(
-                                    androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
+                            onPickPhoto = { pickPhoto.launch("image/*") },
                             onRemove = { lifecycleScope.launch { accounts.removeAvatar() } },
                             onDismiss = { showAvatarPicker = false }
                         )
@@ -458,6 +530,7 @@ class MainActivity : ComponentActivity() {
                         FriendsDialog(
                             friends = friends,
                             onlineIds = onlineFriends,
+                            lastSeen = lastSeen,
                             onAdd = { accounts.addFriend(it) },
                             onAccept = { accounts.acceptFriend(it) },
                             onRemove = { accounts.removeFriend(it) },
@@ -513,6 +586,28 @@ class MainActivity : ComponentActivity() {
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    private var resumeMusicOnStart = false
+    private var unmuteMicOnStart = false
+
+    /** App in the background: stop the music and cut the microphone (restored in onStart). */
+    override fun onStop() {
+        super.onStop()
+        if (!::audioController.isInitialized) return
+        resumeMusicOnStart = audioController.musicPlayer.isPlaying.value
+        if (resumeMusicOnStart) audioController.stopMusic()
+        unmuteMicOnStart = !audioController.voiceChat.isMicMuted.value
+        if (unmuteMicOnStart) audioController.voiceChat.setMicrophoneMuted(true)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (!::audioController.isInitialized) return
+        if (resumeMusicOnStart) audioController.musicPlayer.resume()
+        if (unmuteMicOnStart) audioController.voiceChat.setMicrophoneMuted(false)
+        resumeMusicOnStart = false
+        unmuteMicOnStart = false
     }
 
     override fun onDestroy() {

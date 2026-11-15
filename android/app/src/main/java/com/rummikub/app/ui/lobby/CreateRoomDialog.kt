@@ -143,7 +143,7 @@ fun CreateRoomDialog(
                             Chip("Interdit", !jokerAllowedInInitial) { jokerAllowedInInitial = false }
                         }
                         RuleRow("⚠️ Pénalité") {
-                            listOf(1, 3).forEach { count -> Chip("$count tuile${if (count > 1) "s" else ""}", penaltyTiles == count) { penaltyTiles = count } }
+                            listOf(0, 1, 2, 3).forEach { count -> Chip(if (count == 0) "Aucune" else "$count tuile${if (count > 1) "s" else ""}", penaltyTiles == count) { penaltyTiles = count } }
                         }
                         RuleRow("⚖️ Arbitrage") {
                             Chip("Strict", validationMode == ValidationMode.STRICT_AUTOMATIC) { validationMode = ValidationMode.STRICT_AUTOMATIC }

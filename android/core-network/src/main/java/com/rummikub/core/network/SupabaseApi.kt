@@ -47,6 +47,12 @@ data class Profile(
 )
 
 @Serializable
+private data class PresenceRow(
+    @SerialName("user_id") val userId: String,
+    @SerialName("last_seen") val lastSeen: String
+)
+
+@Serializable
 private data class FriendshipRow(
     val id: Long,
     val requester: String,
@@ -214,6 +220,15 @@ class SupabaseApi(
             setBody(jpeg)
         }.ok()
         return "$base/storage/v1/object/public/avatars/$userId/avatar.jpg?v=${System.currentTimeMillis()}"
+    }
+
+    // ---------- presence ----------
+
+    /** Last time each of these friends was connected (ISO date), only for accepted friends (RLS). */
+    suspend fun lastSeen(userIds: List<String>): Map<String, String> {
+        if (userIds.isEmpty()) return emptyMap()
+        val text = client.get("$base/rest/v1/presence?select=user_id,last_seen&user_id=in.(${userIds.joinToString(",")})") { common() }.ok()
+        return json.decodeFromString(ListSerializer(PresenceRow.serializer()), text).associate { it.userId to it.lastSeen }
     }
 
     // ---------- friends ----------

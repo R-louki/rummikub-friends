@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: allow clear-text traffic so the emulator can reach a local server (ws://10.0.2.2:PORT),
+     and expose the screen preview tool. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true">
+        <activity
+            android:name=".PreviewActivity"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape" />
+    </application>
+</manifest>

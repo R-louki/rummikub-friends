@@ -184,6 +184,19 @@ class SupabaseApiTest {
     }
 
     @Test
+    fun `last seen of the friends is read from the presence table`() = runBlocking {
+        val sent = mutableListOf<HttpRequestData>()
+        val api = api(sent) {
+            HttpStatusCode.OK to """[{"user_id":"a","last_seen":"2026-11-15T10:00:00+00:00"},{"user_id":"b","last_seen":"2026-11-14T09:00:00+00:00"}]"""
+        }
+        val seen = api.lastSeen(listOf("a", "b"))
+        assertEquals("2026-11-15T10:00:00+00:00", seen["a"])
+        assertEquals(2, seen.size)
+        assertTrue(sent.single().url.toString().contains("presence?select=user_id,last_seen&user_id=in.(a,b)"))
+        assertTrue(api { HttpStatusCode.OK to "[]" }.lastSeen(emptyList()).isEmpty())
+    }
+
+    @Test
     fun `a failed call raises SupabaseException with the status`() = runBlocking {
         try {
             api { HttpStatusCode.Unauthorized to """{"message":"JWT expired"}""" }.history()

@@ -28,7 +28,10 @@ val appConfig = Properties().apply {
     val f = rootProject.file("app-config.properties")
     if (f.exists()) FileInputStream(f).use { load(it) }
 }
-val googleWebClientId: String = appConfig.getProperty("googleWebClientId", "").trim()
+// -PgoogleWebClientId= (empty) builds an anonymous-play app, handy for the emulator; -PserverUrl=ws://10.0.2.2:8090 targets a local server
+val googleWebClientId: String =
+    (project.findProperty("googleWebClientId") as String?) ?: appConfig.getProperty("googleWebClientId", "").trim()
+val serverUrl: String = (project.findProperty("serverUrl") as String?) ?: "wss://rummikub-friends.onrender.com"
 
 val releaseStorePath = signingValue("storeFile", "RUMMIKUB_KEYSTORE_FILE")
 val releaseStoreFile = releaseStorePath?.let { rootProject.file(it) }?.takeIf { it.exists() }
@@ -42,12 +45,13 @@ android {
         applicationId = "com.rummikub.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.3.1"
+        versionCode = 10
+        versionName = "1.3.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
+        buildConfigField("String", "SERVER_URL", "\"$serverUrl\"")
 
         // Phones only: drop the x86/x86_64 WebRTC binaries (emulators), halves the APK size.
         ndk {

@@ -91,6 +91,20 @@ sealed class NetworkPacket {
         val roomCode: String
     ) : NetworkPacket()
 
+    /** The host ends the whole game (all the cumulated rounds) and everybody gets the final ranking. */
+    @Serializable
+    @SerialName("end_session_req")
+    object EndSessionRequest : NetworkPacket()
+
+    @Serializable
+    @SerialName("session_over_evt")
+    data class SessionOverEvent(
+        val roomCode: String,
+        val roundsPlayed: Int,
+        val winnerName: String,
+        val standings: List<SessionStanding>
+    ) : NetworkPacket()
+
     @Serializable
     @SerialName("start_game_req")
     data class StartGameRequest(
@@ -324,6 +338,17 @@ sealed class NetworkPacket {
         val message: String
     ) : NetworkPacket()
 }
+
+/** One line of the final ranking of a game. */
+@Serializable
+data class SessionStanding(
+    val playerId: String,
+    val playerName: String,
+    val avatar: String? = null,
+    val isBot: Boolean = false,
+    val totalScore: Int,
+    val roundsWon: Int = 0
+)
 
 /**
  * Lightweight summary of a player in a room.

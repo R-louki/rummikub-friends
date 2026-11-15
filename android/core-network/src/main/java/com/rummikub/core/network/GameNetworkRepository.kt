@@ -74,6 +74,10 @@ class GameNetworkRepository(
 
     private var pendingAuth: CompletableDeferred<NetworkPacket.AuthResponse>? = null
 
+    /** The table as the player whose turn it is currently arranges it (live view for the others). */
+    private val _liveMelds = MutableStateFlow<List<MeldSet>?>(null)
+    val liveMelds: StateFlow<List<MeldSet>?> = _liveMelds.asStateFlow()
+
     private val _lastMove = MutableStateFlow<LastMove?>(null)
     /** The last move of an opponent (null after my own action or a new game). */
     val lastMove: StateFlow<LastMove?> = _lastMove.asStateFlow()
@@ -91,6 +95,10 @@ class GameNetworkRepository(
 
     private val _gameOverEvents = MutableSharedFlow<NetworkPacket.GameOverEvent>(extraBufferCapacity = 4)
     val gameOverEvents: SharedFlow<NetworkPacket.GameOverEvent> = _gameOverEvents.asSharedFlow()
+
+    private val _sessionOverEvents = MutableSharedFlow<NetworkPacket.SessionOverEvent>(extraBufferCapacity = 2)
+    /** The host ended the game: final standings of all the rounds. */
+    val sessionOverEvents: SharedFlow<NetworkPacket.SessionOverEvent> = _sessionOverEvents.asSharedFlow()
 
     private val _turnRollbackEvents = MutableSharedFlow<NetworkPacket.TurnRollbackEvent>(extraBufferCapacity = 8)
     val turnRollbackEvents: SharedFlow<NetworkPacket.TurnRollbackEvent> = _turnRollbackEvents.asSharedFlow()
@@ -115,6 +123,11 @@ class GameNetworkRepository(
 
     private var reconnectJob: Job? = null
     @Volatile private var pendingAction: NetworkPacket? = null
+
+    /** True from the tap on Valider/Piocher until the server answers (drives the button feedback). */
+    private val _actionInFlight = MutableStateFlow(false)
+    val actionInFlight: StateFlow<Boolean> = _actionInFlight.asStateFlow()
+    @Volatile private var pendingSentAt: Long = 0L
     private var pendingJob: Job? = null
     private var connectJob: Job? = null
 
@@ -192,6 +205,11 @@ class GameNetworkRepository(
     suspend fun startGame() {
         val code = _roomCode.value ?: return
         sendOrQueue(NetworkPacket.StartGameRequest(roomCode = code))
+    }
+
+    /** Host only: end the game (after a finished round) and show the final ranking to everybody. */
+    suspend fun endSession() {
+        sendOrQueue(NetworkPacket.EndSessionRequest)
     }
 
     suspend fun updateConfig(config: GameConfig) {
@@ -291,9 +309,11 @@ class GameNetworkRepository(
      */
     private suspend fun sendTurnAction(packet: NetworkPacket) {
         pendingAction = packet
+        _actionInFlight.value = true
+        pendingSentAt = System.currentTimeMillis()
         startPendingWatchdog(packet)
         if (!webSocketClient.isConnected) {
-            _errors.emit("Connexion perdue : votre action sera envoyée dès la reconnexion.")
+            // No pop-up: the network indicator shows "Reconnexion" and the action is sent again once back
             handleConnectionLost("Action sans connexion")
             return
         }
@@ -307,16 +327,20 @@ class GameNetworkRepository(
     private fun startPendingWatchdog(packet: NetworkPacket) {
         pendingJob?.cancel()
         pendingJob = scope.launch {
-            delay(4_000L)
+            delay(7_000L)
             if (pendingAction === packet) {
-                _errors.emit("Le serveur ne répond pas : reconnexion en cours...")
+                // Silent: the indicator switches to "Reconnexion" and the action is resent after the snapshot
                 handleConnectionLost("Pas de réponse du serveur")
             }
         }
     }
 
     private fun clearPendingAction() {
+        if (pendingAction != null) {
+            System.out.println("[net] commande ${pendingAction!!::class.simpleName} acquittée en ${System.currentTimeMillis() - pendingSentAt} ms")
+        }
         pendingAction = null
+        _actionInFlight.value = false
         pendingJob?.cancel()
         pendingJob = null
     }
@@ -410,9 +434,8 @@ class GameNetworkRepository(
                 } catch (e: Exception) {
                     val elapsed = System.currentTimeMillis() - started
                     if (elapsed > initialConnectBudgetMs) {
+                        // Stays "Failed": the lobby shows a calm banner with a Retry button (no pop-up)
                         _connectionStatus.value = ConnectionStatus.Failed(e)
-                        _errors.emit("Impossible de joindre le serveur de jeu. Vérifiez votre connexion et réessayez.")
-                        _connectionStatus.value = ConnectionStatus.Disconnected
                         return@launch
                     }
                     attempt++
@@ -599,13 +622,25 @@ class GameNetworkRepository(
                 _gameConfig.value = packet.config
             }
 
+            is NetworkPacket.SetModifiedEvent -> {
+                if (packet.playerId != _myPlayerId.value &&
+                    packet.playerId == _boardState.value.activePlayerId) {
+                    _liveMelds.value = packet.intermediateMelds
+                }
+            }
+
             is NetworkPacket.GameStartedEvent -> {
+                _liveMelds.value = null
                 _lastMove.value = null
                 _gracePeriodCountdown.value = null
                 _boardState.value = packet.boardState
                 _playerRack.value = packet.initialRack
                 _players.value = packet.players
                 _gameStartedEvents.emit(packet)
+            }
+
+            is NetworkPacket.SessionOverEvent -> {
+                _sessionOverEvents.emit(packet)
             }
 
             is NetworkPacket.GameOverEvent -> {
@@ -615,6 +650,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TurnCommittedEvent -> {
+                _liveMelds.value = null
                 if (packet.activePlayerId == _myPlayerId.value) {
                     clearPendingAction()
                     _lastMove.value = null
@@ -633,6 +669,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TurnRollbackEvent -> {
+                _liveMelds.value = null
                 if (packet.playerId == _myPlayerId.value) clearPendingAction()
                 _lastMove.value = null
                 _gracePeriodCountdown.value = null
@@ -650,6 +687,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.TileDrawnEvent -> {
+                _liveMelds.value = null
                 if (packet.playerId == _myPlayerId.value) {
                     clearPendingAction()
                     _lastMove.value = null
@@ -680,6 +718,7 @@ class GameNetworkRepository(
             }
 
             is NetworkPacket.FullSnapshotResponse -> {
+                _liveMelds.value = null
                 _gracePeriodCountdown.value = null
                 _boardState.value = packet.boardState
                 _playerRack.value = packet.playerRack

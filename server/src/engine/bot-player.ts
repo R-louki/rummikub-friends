@@ -235,13 +235,13 @@ const JOKER_KEY = 52;
  * valid melds that keeps all table tiles on the table and lays down as many rack tiles as possible.
  * This is what lets the computer split runs, steal from groups of four, move Jokers, etc.
  */
-function computeSmartMove(
+function* smartMoveGen(
   rack: Tile[],
   board: MeldSet[],
   config: GameConfig,
   nodeCap = 60_000,
-  timeBudgetMs = 350
-): BotMove | null {
+  timeBudgetMs = 1500
+): Generator<void, BotMove | null, void> {
   const strategy = config.jokerPointStrategy;
 
   const need = new Int8Array(52);
@@ -403,9 +403,13 @@ function computeSmartMove(
   };
 
   const picks: number[] = [];
-  const dfs = (optStart: number) => {
+  // The search yields every ~1000 nodes so a server can interleave other work (other players' commands)
+  function* dfs(optStart: number): Generator<void, void, void> {
     if (nodes++ > nodeCap) return;
-    if ((nodes & 1023) === 0 && Date.now() - started > timeBudgetMs) { nodes = nodeCap + 1; return; }
+    if ((nodes & 1023) === 0) {
+      if (Date.now() - started > timeBudgetMs) { nodes = nodeCap + 1; return; }
+      yield;
+    }
 
     let mk = -1;
     for (let k = 0; k < 52; k++) if (need[k] > 0) { mk = k; break; }
@@ -418,7 +422,7 @@ function computeSmartMove(
         if (!feasible(c)) continue;
         const u = take(c);
         picks.push(ci);
-        dfs(optStart);
+        yield* dfs(optStart);
         picks.pop();
         give(c, u);
         if (nodes > nodeCap) return;
@@ -437,13 +441,14 @@ function computeSmartMove(
       if (!feasible(c)) continue;
       const u = take(c);
       picks.push(rackOnly[i]);
-      dfs(i);
+      yield* dfs(i);
       picks.pop();
       give(c, u);
       if (nodes > nodeCap) return;
     }
-  };
-  dfs(0);
+  }
+  yield; // candidates are built: let others run before the search starts
+  yield* dfs(0);
 
   if (!best) return null;
 
@@ -503,19 +508,23 @@ function computeSmartMove(
  * Computer player move: after the first meld it solves the whole table (splitting runs, taking
  * tiles from groups, moving Jokers...). The simpler "new melds + extensions" move is kept as a
  * safety net, and whichever lays down more tiles wins.
+ *
+ * It is a generator that yields while thinking, so the server can keep answering players:
+ * drive it with {@link solveBotMove} (production) or {@link computeBotMove} (tests, synchronous).
  */
-export function computeBotMove(
+export function* botMoveGen(
   rack: Tile[],
   board: MeldSet[],
   hasMadeInitialMeld: boolean,
   config: GameConfig
-): BotMove | null {
+): Generator<void, BotMove | null, void> {
   const simple = computeSimpleMove(rack, board, hasMadeInitialMeld, config);
+  yield;
   if (!hasMadeInitialMeld) return simple;
 
   let smart: BotMove | null = null;
   try {
-    smart = computeSmartMove(rack, board, config);
+    smart = yield* smartMoveGen(rack, board, config);
   } catch (err: any) {
     console.error('[Bot] solveur:', err?.message);
   }
@@ -523,4 +532,68 @@ export function computeBotMove(
   if (!simple) return smart;
   const placed = (m: BotMove) => rack.length - m.remainingRackTileIds.length;
   return placed(smart) > placed(simple) ? smart : simple;
+}
+
+/** Runs the whole computation at once (tests, tools). */
+export function computeBotMove(
+  rack: Tile[],
+  board: MeldSet[],
+  hasMadeInitialMeld: boolean,
+  config: GameConfig
+): BotMove | null {
+  const gen = botMoveGen(rack, board, hasMadeInitialMeld, config);
+  let r = gen.next();
+  while (!r.done) r = gen.next();
+  return r.value;
+}
+
+/**
+ * Runs the computation in small slices, giving the event loop a turn between slices, and calls
+ * [done] with the move. The server stays responsive while a computer player is thinking.
+ */
+export function solveBotMove(
+  rack: Tile[],
+  board: MeldSet[],
+  hasMadeInitialMeld: boolean,
+  config: GameConfig,
+  done: (move: BotMove | null) => void
+): void {
+  const gen = botMoveGen(rack, board, hasMadeInitialMeld, config);
+  const step = () => {
+    let r: IteratorResult<void, BotMove | null>;
+    try {
+      r = gen.next();
+    } catch (err: any) {
+      console.error('[Bot] erreur:', err?.message);
+      done(null);
+      return;
+    }
+    if (r.done) done(r.value);
+    else setImmediate(step);
+  };
+  step();
+}
+
+/**
+ * The boards a spectator sees while the computer "moves tiles": the unchanged melds stay, and each
+ * changed or new meld appears one after the other while the tiles it takes disappear from where
+ * they were. The last state equals the final board. No tile is ever shown twice.
+ */
+export function intermediateBoards(before: MeldSet[], finalMelds: MeldSet[]): MeldSet[][] {
+  const sameMeld = (a: MeldSet, b: MeldSet) =>
+    a.id === b.id && a.tiles.length === b.tiles.length && a.tiles.every((t, i) => t.id === b.tiles[i].id);
+  const unchanged = finalMelds.filter(f => before.some(b => sameMeld(b, f)));
+  const changed = finalMelds.filter(f => !before.some(b => sameMeld(b, f)));
+  const staleOld = before.filter(b => !finalMelds.some(f => sameMeld(b, f)));
+
+  const states: MeldSet[][] = [];
+  for (let k = 1; k <= changed.length; k++) {
+    const revealed = changed.slice(0, k);
+    const taken = new Set(revealed.flatMap(m => m.tiles.map(t => t.id)));
+    const remainingOld = staleOld
+      .map(m => ({ ...m, tiles: m.tiles.filter(t => !taken.has(t.id)) }))
+      .filter(m => m.tiles.length > 0);
+    states.push([...unchanged, ...remainingOld, ...revealed]);
+  }
+  return states;
 }

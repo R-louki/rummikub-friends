@@ -11,7 +11,7 @@ import { ServerPlayer, StateDelta, RoomStatus } from '../models/server-models.js
 import { createStandardDeck } from '../engine/deck.js';
 import { BoardValidator } from '../engine/board-validator.js';
 import { InitialMeldEvaluator } from '../engine/initial-meld-evaluator.js';
-import { computeBotMove } from '../engine/bot-player.js';
+import { BotMove, computeBotMove, intermediateBoards, solveBotMove } from '../engine/bot-player.js';
 import type { GameRecord } from './accounts.js';
 import crypto from 'node:crypto';
 
@@ -31,6 +31,7 @@ export interface RoomSnapshot {
   boardState: BoardState;
   turnSnapshot: { board: BoardState; rack: PlayerRack; turnNumber: number } | null;
   totalScores: Array<[string, number]>;
+  roundsWon?: Array<[string, number]>;
   roundNumber: number;
   consecutivePasses: number;
   turnRemainingMs: number;
@@ -52,6 +53,8 @@ export class Room {
 
   /** Running total of each player's points over all the rounds played in this room. */
   private readonly totalScores = new Map<string, number>();
+  /** Rounds won by each player during this game (a game is made of several cumulative rounds). */
+  private readonly roundsWon = new Map<string, number>();
   private roundNumber = 0;
   /** Consecutive turns passed with an empty draw pile; a full round of passes blocks the game. */
   private consecutivePasses = 0;
@@ -86,6 +89,16 @@ export class Room {
   private botTimer: NodeJS.Timeout | null = null;
   /** Delay before a computer player acts, so humans can follow what it does. */
   botThinkMs: [number, number] = [1200, 2600];
+  /** Set when the table is closed: nothing may run on it any more (no zombie computer players). */
+  private disposed = false;
+
+  /** Tests only: let computers play a table that has no human at all (never true in production). */
+  simulateWithoutHumans = false;
+
+  /** Tests: compute computer moves synchronously instead of in slices that let the server breathe. */
+  syncBots = false;
+  /** Pause between the visible steps of a computer move (tiles appear one combination at a time). */
+  botStepMs = 650;
 
   private gracePeriodSecondsRemaining: number = 0;
   private gracePeriodTickInterval: NodeJS.Timeout | null = null;
@@ -176,6 +189,7 @@ export class Room {
       boardState: this.boardState,
       turnSnapshot: this.turnSnapshot,
       totalScores: Array.from(this.totalScores.entries()),
+      roundsWon: Array.from(this.roundsWon.entries()),
       roundNumber: this.roundNumber,
       consecutivePasses: this.consecutivePasses,
       turnRemainingMs: this.turnRemainingMs
@@ -199,6 +213,7 @@ export class Room {
     room.consecutivePasses = snap.consecutivePasses;
     room.turnRemainingMs = snap.turnRemainingMs > 0 ? snap.turnRemainingMs : snap.config.turnDurationSeconds * 1000;
     for (const [id, score] of snap.totalScores) room.totalScores.set(id, score);
+    for (const [id, n] of snap.roundsWon ?? []) room.roundsWon.set(id, n);
     for (const p of snap.players) {
       const online = !!p.isBot;
       room.players.set(p.id, {
@@ -353,6 +368,7 @@ export class Room {
     this.players.delete(playerId);
     this.sockets.delete(playerId);
     this.totalScores.delete(playerId);
+    this.roundsWon.delete(playerId);
 
     let newHostId: string | null = null;
     if (player.isHost) {
@@ -526,8 +542,14 @@ export class Room {
   // COMPUTER PLAYERS
   // ==========================================
 
+  /** Computer players only play while at least one human is connected and the table is open. */
+  private botsMayPlay(): boolean {
+    return !this.disposed && this.status === 'IN_GAME' && (!this.allDisconnected || this.simulateWithoutHumans);
+  }
+
   private scheduleBotTurn(botId: string): void {
     this.clearBotTimer();
+    if (!this.botsMayPlay()) return;
     const [min, max] = this.botThinkMs;
     const delay = min + Math.random() * Math.max(0, max - min);
     const turnAtSchedule = this.currentTurnNumber;
@@ -553,22 +575,61 @@ export class Room {
     if (!bot || !snapshot) return;
     const turn = this.currentTurnNumber;
 
-    let move = null;
+    const stillMyTurn = () =>
+      this.botsMayPlay() && this.currentTurnNumber === turn && this.boardState.activePlayerId === botId;
+
+    const withMove = (move: BotMove | null) => {
+      if (!stillMyTurn()) return; // the game moved on while the computer was thinking
+      if (!move) {
+        this.handleDrawTile(botId);
+        return;
+      }
+      this.showBotSteps(botId, move, stillMyTurn, () => {
+        if (!stillMyTurn()) return;
+        this.handleEndTurn(botId, move.melds, move.remainingRackTileIds);
+        // The proposal was refused (should not happen): never leave the table waiting, draw instead.
+        if (stillMyTurn()) this.handleDrawTile(botId);
+      });
+    };
+
     try {
-      move = computeBotMove(bot.rack.tiles, this.boardState.melds, bot.rack.hasMadeInitialMeld, this.config);
+      if (this.syncBots) {
+        withMove(computeBotMove(bot.rack.tiles, this.boardState.melds, bot.rack.hasMadeInitialMeld, this.config));
+      } else {
+        // Computed in small slices: other players' commands are answered while the computer thinks.
+        solveBotMove(bot.rack.tiles, this.boardState.melds, bot.rack.hasMadeInitialMeld, this.config, withMove);
+      }
     } catch (err: any) {
       console.error(`[Room ${this.roomCode}] Erreur IA ${botId}:`, err?.message);
+      withMove(null);
     }
+  }
 
-    if (move) {
-      this.handleEndTurn(botId, move.melds, move.remainingRackTileIds);
-      // The proposal was refused (should not happen): never leave the table waiting, draw instead.
-      if (this.status === 'IN_GAME' && this.currentTurnNumber === turn && this.boardState.activePlayerId === botId) {
-        this.handleDrawTile(botId);
-      }
-    } else {
-      this.handleDrawTile(botId);
+  /**
+   * Lets the spectators watch the computer play: its combinations appear one after the other
+   * (set_modified_evt, the same event a human's moves use), then the turn is committed.
+   */
+  private showBotSteps(botId: string, move: BotMove, stillMyTurn: () => boolean, finish: () => void): void {
+    let states = intermediateBoards(this.boardState.melds, move.melds);
+    if (states.length > 6) {
+      // a long rearrangement: show 6 evenly spread steps
+      const picked: typeof states = [];
+      for (let i = 1; i <= 6; i++) picked.push(states[Math.ceil((i * states.length) / 6) - 1]);
+      states = picked;
     }
+    let i = 0;
+    const next = () => {
+      this.botTimer = null;
+      if (!stillMyTurn()) return;
+      if (i >= states.length) {
+        finish();
+        return;
+      }
+      this.broadcast({ type: 'set_modified_evt', playerId: botId, intermediateMelds: states[i++] }, botId);
+      this.botTimer = setTimeout(next, this.botStepMs);
+      this.botTimer.unref?.();
+    };
+    next();
   }
 
   private resumeTurnTimer(): void {
@@ -946,6 +1007,7 @@ export class Room {
     });
 
     for (const sc of scores) sc.totalScore = this.totalScores.get(sc.playerId) ?? 0;
+    this.roundsWon.set(winnerId, (this.roundsWon.get(winnerId) ?? 0) + 1);
 
     this.broadcast({
       type: 'game_over_evt',
@@ -1124,12 +1186,39 @@ export class Room {
     }
   }
 
+  /**
+   * Ends the whole game (all the cumulated rounds): tells everybody the final standings.
+   * The caller (RoomManager) then closes the table.
+   */
+  endSession(): { type: string; roomCode: string; roundsPlayed: number; winnerName: string; standings: any[] } {
+    const standings = Array.from(this.players.values())
+      .map(p => ({
+        playerId: p.id,
+        playerName: p.name,
+        avatar: p.avatar ?? null,
+        isBot: !!p.isBot,
+        totalScore: this.totalScores.get(p.id) ?? 0,
+        roundsWon: this.roundsWon.get(p.id) ?? 0
+      }))
+      .sort((a, b) => b.totalScore - a.totalScore || b.roundsWon - a.roundsWon);
+    const packet = {
+      type: 'session_over_evt',
+      roomCode: this.roomCode,
+      roundsPlayed: this.roundNumber,
+      winnerName: standings[0]?.playerName ?? '',
+      standings
+    };
+    this.broadcast(packet);
+    return packet;
+  }
+
   private addToTotal(playerId: string, delta: number): void {
     this.totalScores.set(playerId, (this.totalScores.get(playerId) ?? 0) + delta);
   }
 
   /** Stops every timer; called by the RoomManager before dropping the room. */
   dispose(): void {
+    this.disposed = true;
     this.clearTurnTimers();
     this.clearGraceTimers();
   }

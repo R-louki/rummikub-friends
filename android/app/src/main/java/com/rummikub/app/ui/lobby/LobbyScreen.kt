@@ -34,6 +34,8 @@ fun LobbyScreen(
     onCreateRoom: (hostName: String, config: GameConfig) -> Unit,
     onJoinRoom: (roomCode: String, playerName: String) -> Unit,
     onCancelConnecting: () -> Unit,
+    latencyMs: Long = 0L,
+    onRetryConnection: () -> Unit = {},
     onOpenAudio: () -> Unit = {},
     startingMessage: String? = null,
     accountPseudo: String? = null,
@@ -161,12 +163,36 @@ fun LobbyScreen(
             }
         }
 
-        // Audio settings / "Ma musique"
-        TextButton(
-            onClick = onOpenAudio,
-            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+        // Top right: network quality and audio settings
+        Row(
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text("🎵 Musique & audio", color = Color(0xFFFFD54F), fontSize = 12.sp)
+            if (connectionStatus !is ConnectionStatus.Disconnected || accountPseudo != null) {
+                com.rummikub.app.ui.components.NetworkIndicator(connectionStatus, latencyMs)
+            }
+            TextButton(onClick = onOpenAudio) {
+                Text("🎵 Musique & audio", color = Color(0xFFFFD54F), fontSize = 12.sp)
+            }
+        }
+
+        // Server unreachable: a calm banner instead of a pop-up
+        if (connectionStatus is ConnectionStatus.Failed) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 18.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF3E2723))
+                    .border(1.dp, Color(0xFFFF8A65), RoundedCornerShape(12.dp))
+                    .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Serveur injoignable pour le moment", color = Color.White, fontSize = 12.sp)
+                TextButton(onClick = onRetryConnection) { Text("Réessayer", color = Color(0xFFFFD54F), fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            }
         }
 
         // Dialogs

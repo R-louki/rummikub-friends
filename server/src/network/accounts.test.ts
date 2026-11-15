@@ -23,6 +23,8 @@ class FakeBackend implements AccountBackend {
   tokens = new Map<string, Account>();
   friends = new Map<string, string[]>();
   saved: GameRecord[] = [];
+  touched: string[] = [];
+  async touch(userId: string) { this.touched.push(userId); }
   async verify(token: string) { return this.tokens.get(token) ?? null; }
   async friendIds(userId: string) { return this.friends.get(userId) ?? []; }
   async saveGame(r: GameRecord) { this.saved.push(r); }
@@ -276,4 +278,60 @@ test('Avatars: the avatar of an account is shown to the other players, computers
   const players = c.last('room_joined_res').players;
   assert.deepStrictEqual(players.filter((p: any) => p.name.includes('(ordi)')).map((p: any) => p.avatar), ['emoji:🤖', 'emoji:🤖']);
   manager.getRoom(c.last('room_joined_res').roomCode)?.dispose();
+});
+
+test('Session: the host ends the game, everybody gets the cumulated standings and the table closes', async () => {
+  const { handler, tick, manager } = setup();
+  const a = ws();
+  const b = ws();
+  handler.handle(asWs(a), { type: 'auth_req', accessToken: 'tok-sami' });
+  handler.handle(asWs(b), { type: 'auth_req', accessToken: 'tok-yas' });
+  await tick();
+  handler.handle(asWs(a), { type: 'create_room_req', config: { ...cfg, initialMeldThreshold: 30 } });
+  const code = a.last('room_joined_res').roomCode;
+  handler.handle(asWs(b), { type: 'join_room_req', roomCode: code });
+  const room = manager.getRoom(code)!;
+
+  // a round in progress cannot be cut short
+  room.startGame();
+  handler.handle(asWs(a), { type: 'end_session_req' });
+  assert.strictEqual(a.last('error').code, 'CANNOT_END');
+
+  // two finished rounds (Sami then Yasmine win), then the host ends the game
+  (room as any).status = 'FINISHED';
+  (room as any).roundNumber = 2;
+  (room as any).totalScores.set(Array.from(room.players.keys())[0], 40);
+  (room as any).totalScores.set(Array.from(room.players.keys())[1], -40);
+  (room as any).roundsWon.set(Array.from(room.players.keys())[0], 1);
+
+  // only the host may end it
+  handler.handle(asWs(b), { type: 'end_session_req' });
+  assert.strictEqual(b.last('error').code, 'UNAUTHORIZED');
+  assert.ok(manager.getRoom(code), 'the table is still open');
+
+  handler.handle(asWs(a), { type: 'end_session_req' });
+  const over = b.last('session_over_evt');
+  assert.strictEqual(over.roundsPlayed, 2);
+  assert.strictEqual(over.winnerName, 'Sami');
+  assert.deepStrictEqual(over.standings.map((s: any) => [s.playerName, s.totalScore, s.roundsWon]), [['Sami', 40, 1], ['Yasmine', -40, 0]]);
+  assert.strictEqual(a.ofType('session_over_evt').length, 1);
+  assert.strictEqual(manager.getRoom(code), undefined, 'the table is closed');
+});
+
+test('Presence: "last seen" is recorded when a player connects and when his last socket closes', async () => {
+  const { handler, tick, backend } = setup();
+  const phone1 = ws();
+  const phone2 = ws();
+  handler.handle(asWs(phone1), { type: 'auth_req', accessToken: 'tok-sami' });
+  await tick();
+  assert.deepStrictEqual(backend.touched, ['u-sami'], 'seen when connecting');
+
+  handler.handle(asWs(phone2), { type: 'auth_req', accessToken: 'tok-sami' });   // same player, second device
+  await tick();
+  handler.onClose(asWs(phone1));
+  assert.strictEqual(backend.touched.length, 2, 'still online on the other device: no "went offline" record');
+
+  handler.onClose(asWs(phone2));
+  assert.strictEqual(backend.touched.length, 3, 'recorded when the last socket closes');
+  assert.strictEqual(backend.touched[2], 'u-sami');
 });

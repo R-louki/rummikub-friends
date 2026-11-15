@@ -42,6 +42,8 @@ export interface AccountBackend {
   /** Ids of the accepted friends of [userId]. */
   friendIds(userId: string): Promise<string[]>;
   saveGame(record: GameRecord): Promise<void>;
+  /** Records "seen now" for [userId] (shown to his friends as "vu il y a 5 min"). */
+  touch(userId: string): Promise<void>;
 }
 
 /** Disabled backend: the server behaves as before, with anonymous players. */
@@ -50,6 +52,7 @@ export class NoAccounts implements AccountBackend {
   async verify(): Promise<Account | null> { return null; }
   async friendIds(): Promise<string[]> { return []; }
   async saveGame(): Promise<void> { /* nothing */ }
+  async touch(): Promise<void> { /* nothing */ }
 }
 
 export class SupabaseAccounts implements AccountBackend {
@@ -105,6 +108,17 @@ export class SupabaseAccounts implements AccountBackend {
     return rows.map(r => (r.requester === userId ? r.addressee : r.requester));
   }
 
+  async touch(userId: string): Promise<void> {
+    if (!this.enabled) return;
+    const res = await fetch(`${this.base}/rest/v1/presence?on_conflict=user_id`, {
+      method: 'POST',
+      headers: this.headers(undefined, { Prefer: 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify([{ user_id: userId, last_seen: new Date().toISOString() }]),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) throw new Error(`presence: HTTP ${res.status}`);
+  }
+
   async saveGame(record: GameRecord): Promise<void> {
     if (!this.enabled) return;
     const created = await fetch(`${this.base}/rest/v1/game_history`, {
@@ -151,13 +165,18 @@ export class AccountSessions {
     this.byUser.get(account.userId)!.add(ws);
   }
 
-  unbind(ws: WebSocket): void {
+  /** Returns the account when this was its last open socket (the player just went offline). */
+  unbind(ws: WebSocket): Account | undefined {
     const old = this.bySocket.get(ws);
-    if (!old) return;
+    if (!old) return undefined;
     this.bySocket.delete(ws);
     const set = this.byUser.get(old.userId);
     set?.delete(ws);
-    if (set && set.size === 0) this.byUser.delete(old.userId);
+    if (set && set.size === 0) {
+      this.byUser.delete(old.userId);
+      return old;
+    }
+    return undefined;
   }
 
   accountOf(ws: WebSocket): Account | undefined {

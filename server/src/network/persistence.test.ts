@@ -61,6 +61,8 @@ test('Persistence: after a restart the player reconnects with his token and the 
     const w1 = ws();
     const { room, playerId, sessionToken } = manager1.createRoom('Alice', asWs(w1), { ...DEFAULT_GAME_CONFIG, botCount: 1, maxPlayers: 2, turnDurationSeconds: 30 });
     room.botThinkMs = [50, 60];
+    room.syncBots = true;
+    room.botStepMs = 10;
     room.startGame();
     const snapshot = JSON.parse(JSON.stringify(room.toSnapshot()));
     const code = room.roomCode;
@@ -75,6 +77,8 @@ test('Persistence: after a restart the player reconnects with his token and the 
       const restored = manager2.getRoom(code)!;
       assert.ok(restored, 'the table exists again');
       restored.botThinkMs = [50, 60];
+      restored.syncBots = true;
+      restored.botStepMs = 10;
 
       // the phone reconnects with the old session token
       const w2 = ws();
@@ -86,7 +90,7 @@ test('Persistence: after a restart the player reconnects with his token and the 
 
       // it is Alice's turn: she draws, then the restored robot must play by itself
       restored.handleDrawTile(playerId);
-      mock.timers.tick(5000);
+      for (let i = 0; i < 100; i++) mock.timers.tick(100); // small steps: the computer shows its moves one by one
       const botActed = w2.ofType('tile_drawn_evt').some(p => p.playerId === 'BOT_1') ||
         w2.ofType('turn_committed_evt').some(p => p.activePlayerId === 'BOT_1');
       assert.ok(botActed, 'the computer player keeps playing after the restart');

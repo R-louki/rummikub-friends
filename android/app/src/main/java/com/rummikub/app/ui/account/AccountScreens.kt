@@ -210,10 +210,24 @@ private fun OnlineDot(online: Boolean) {
     )
 }
 
+/** "à l'instant", "il y a 5 min", "il y a 3 h", "il y a 2 j" from an ISO date. */
+fun relativeSeen(iso: String?, now: java.time.Instant = java.time.Instant.now()): String {
+    if (iso == null) return "Hors ligne"
+    val then = try { OffsetDateTime.parse(iso).toInstant() } catch (_: Exception) { return "Hors ligne" }
+    val minutes = java.time.Duration.between(then, now).toMinutes().coerceAtLeast(0)
+    return when {
+        minutes < 1 -> "Vu à l'instant"
+        minutes < 60 -> "Vu il y a $minutes min"
+        minutes < 60 * 24 -> "Vu il y a ${minutes / 60} h"
+        else -> "Vu il y a ${minutes / (60 * 24)} j"
+    }
+}
+
 @Composable
 fun FriendsDialog(
     friends: List<Friend>,
     onlineIds: Set<String>,
+    lastSeen: Map<String, String> = emptyMap(),
     onAdd: suspend (String) -> Unit,
     onAccept: suspend (Friend) -> Unit,
     onRemove: suspend (Friend) -> Unit,
@@ -288,7 +302,8 @@ fun FriendsDialog(
                         item { Text("Pas encore d'ami : ajoutez un pseudo ci-dessus.", fontSize = 11.sp, color = Color.White.copy(alpha = 0.6f)) }
                     }
                     items(accepted, key = { it.friendshipId }) { f ->
-                        FriendRow(f.pseudo, online = f.userId in onlineIds, avatar = f.avatar) {
+                        FriendRow(f.pseudo, online = f.userId in onlineIds, avatar = f.avatar,
+                            subtitle = if (f.userId in onlineIds) "En ligne" else relativeSeen(lastSeen[f.userId])) {
                             TextButton(onClick = { scope.launch { onRemove(f) } }) { Text("Retirer", fontSize = 10.sp, color = Color(0xFFFF8A80)) }
                         }
                     }
@@ -308,7 +323,7 @@ fun FriendsDialog(
 }
 
 @Composable
-private fun FriendRow(name: String, online: Boolean?, avatar: String?, actions: @Composable RowScope.() -> Unit) {
+private fun FriendRow(name: String, online: Boolean?, avatar: String?, subtitle: String? = null, actions: @Composable RowScope.() -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -320,7 +335,17 @@ private fun FriendRow(name: String, online: Boolean?, avatar: String?, actions: 
     ) {
         AvatarCircle(avatar, name, 30.dp)
         if (online != null) OnlineDot(online)
-        Text(name, modifier = Modifier.weight(1f), fontSize = 13.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(name, fontSize = 13.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    fontSize = 10.sp,
+                    color = if (subtitle == "En ligne") Color(0xFF69F0AE) else Color.White.copy(alpha = 0.55f),
+                    maxLines = 1
+                )
+            }
+        }
         actions()
     }
 }

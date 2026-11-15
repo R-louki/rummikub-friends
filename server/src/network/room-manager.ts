@@ -182,6 +182,14 @@ export class RoomManager {
     }
   }
 
+  /** Closes a table for everybody (the host ended the game). */
+  closeRoom(roomCode: string): void {
+    for (const [socket, entry] of Array.from(this.socketToRoom.entries())) {
+      if (entry.roomCode === roomCode) this.socketToRoom.delete(socket);
+    }
+    this.deleteRoom(roomCode, "partie terminée par l'hôte");
+  }
+
   /** Explicit leave request from the client. */
   handleLeave(socket: WebSocket): void {
     const entry = this.socketToRoom.get(socket);

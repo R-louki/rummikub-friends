@@ -61,6 +61,7 @@ export function createPacketHandler(
       return;
     }
     sessions.bind(ws, account);
+    backend.touch(account.userId).catch((err: any) => console.error('[Auth] présence:', err?.message));
     send(ws, { type: 'auth_res', ok: true, userId: account.userId, pseudo: account.pseudo, avatar: account.avatar ?? null, needsPseudo: !account.pseudo });
   }
 
@@ -209,6 +210,23 @@ export function createPacketHandler(
         break;
       }
 
+      case 'end_session_req': {
+        const ctx = roomManager.getRoomBySocket(ws);
+        if (!ctx) return;
+        const player = ctx.room.players.get(ctx.playerId);
+        if (!player || !player.isHost) {
+          send(ws, { type: 'error', code: 'UNAUTHORIZED', message: "Seul l'hôte peut terminer la partie." });
+          return;
+        }
+        if (ctx.room.status === 'IN_GAME') {
+          send(ws, { type: 'error', code: 'CANNOT_END', message: "Terminez d'abord la manche en cours." });
+          return;
+        }
+        ctx.room.endSession();
+        roomManager.closeRoom(ctx.room.roomCode);
+        break;
+      }
+
       case 'start_game_req': {
         const ctx = roomManager.getRoomBySocket(ws);
         if (!ctx) return;
@@ -299,7 +317,8 @@ export function createPacketHandler(
 
   /** Called when a socket closes or fails. */
   function onClose(ws: WebSocket): void {
-    sessions.unbind(ws);
+    const wentOffline = sessions.unbind(ws);
+    if (wentOffline) backend.touch(wentOffline.userId).catch((err: any) => console.error('[Auth] présence:', err?.message));
     roomManager.handleSocketDisconnect(ws);
   }
 

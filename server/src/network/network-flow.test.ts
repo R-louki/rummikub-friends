@@ -329,6 +329,8 @@ test('Bots: computer players play whole games by themselves without breaking the
       room.addPlayer('H1', 'Humain', asWs(human));
       room.addBots(3);
       room.botThinkMs = [100, 200];
+      room.syncBots = true;
+      room.botStepMs = 10;
       assert.strictEqual(room.players.size, 4);
       room.startGame();
 
@@ -369,8 +371,11 @@ test('Bots: every bot-only game ends (empty pile and no move = blocked game, low
   try {
     for (let game = 0; game < 6; game++) {
       const room = new Room('END' + game, { ...DEFAULT_GAME_CONFIG, turnDurationSeconds: 0 });
+      room.simulateWithoutHumans = true;
       room.addBots(3);
       room.botThinkMs = [20, 30];
+      room.syncBots = true;
+      room.botStepMs = 10;
       room.startGame();
       let ticks = 0;
       while (room.status === 'IN_GAME' && ticks < 20000) {
@@ -432,5 +437,82 @@ test('RoomManager: the late close of an OLD socket must not disconnect the playe
   const before = newSocket.sentPackets.length;
   room.handleDrawTile(playerId);
   assert.ok(newSocket.sentPackets.length > before, 'events must reach the new socket');
+  room.dispose();
+});
+
+test('Bots: the computer shows its combinations step by step before committing its turn (real timers)', async () => {
+  const room = new Room('STEP1', { ...DEFAULT_GAME_CONFIG, turnDurationSeconds: 0, initialMeldThreshold: 0 }, orderedDeck);
+  const human = ws();
+  room.addPlayer('H1', 'Humain', asWs(human));
+  room.addBots(1);
+  room.botThinkMs = [20, 30];
+  room.botStepMs = 25;
+  room.startGame();
+
+  // the human draws, the turn passes to the computer which holds BLUE 2..13 and plays a run
+  room.handleDrawTile('H1');
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline && human.ofType('turn_committed_evt').length === 0) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+  const committed = human.ofType('turn_committed_evt');
+  assert.strictEqual(committed.length, 1, 'the computer committed its turn');
+  assert.strictEqual(committed[0].activePlayerId, 'BOT_1');
+
+  const steps = human.sentPackets.filter(p => p.type === 'set_modified_evt' && p.playerId === 'BOT_1');
+  assert.ok(steps.length >= 1, 'spectators saw the computer moving tiles before the commit');
+  const firstCommitIndex = human.sentPackets.findIndex(p => p.type === 'turn_committed_evt');
+  const lastStepIndex = human.sentPackets.map(p => p.type + ':' + p.playerId).lastIndexOf('set_modified_evt:BOT_1');
+  assert.ok(lastStepIndex < firstCommitIndex, 'every step comes before the commit');
+  // no tile is shown twice inside a step
+  for (const st of steps) {
+    const ids = st.intermediateMelds.flatMap((m: any) => m.tiles.map((t: any) => t.id));
+    assert.strictEqual(new Set(ids).size, ids.length, 'a step never shows the same tile twice');
+  }
+  room.dispose();
+});
+
+test('Bots: when the last human leaves, the table goes quiet at once (no computer keeps playing in the background)', async () => {
+  const manager = new RoomManager(null);
+  const h = ws();
+  const { room } = manager.createRoom('Humain', asWs(h), { ...DEFAULT_GAME_CONFIG, botCount: 3, maxPlayers: 4, turnDurationSeconds: 0 });
+  room.botThinkMs = [10, 20];   // real timers and the real (sliced) solver: the production path
+  room.botStepMs = 10;
+  room.startGame();
+
+  // let the computers get going (human draws so the turn reaches them)
+  room.handleDrawTile(Array.from(room.players.values()).find(p => !p.isBot)!.id);
+  await new Promise(r => setTimeout(r, 120));
+
+  manager.handleLeave(asWs(h)); // the human leaves the table
+  assert.strictEqual(manager.getRoom(room.roomCode), undefined, 'the table is closed');
+
+  const version = room.boardState.versionId;
+  const turn = room.boardState.activePlayerId;
+  await new Promise(r => setTimeout(r, 600));  // plenty of time for a zombie to move
+  assert.strictEqual(room.boardState.versionId, version, 'nothing changes on a closed table');
+  assert.strictEqual(room.boardState.activePlayerId, turn, 'no computer plays after the human left');
+});
+
+test('Bots: with every human offline the computers pause and resume when the human comes back', async () => {
+  const manager = new RoomManager(null);
+  const h = ws();
+  const { room, playerId, sessionToken } = manager.createRoom('Humain', asWs(h), { ...DEFAULT_GAME_CONFIG, botCount: 2, maxPlayers: 3, turnDurationSeconds: 0 });
+  room.botThinkMs = [10, 20];
+  room.botStepMs = 10;
+  room.startGame();
+  room.handleDrawTile(playerId);   // computers' turn
+  manager.handleSocketDisconnect(asWs(h));   // the phone drops (app closed, network lost)
+
+  await new Promise(r => setTimeout(r, 100));
+  const frozenVersion = room.boardState.versionId;
+  await new Promise(r => setTimeout(r, 500));
+  assert.strictEqual(room.boardState.versionId, frozenVersion, 'the computers wait while nobody is connected');
+
+  const back = ws();
+  manager.reconnect(room.roomCode, playerId, sessionToken, 1, asWs(back));
+  await new Promise(r => setTimeout(r, 800));
+  assert.ok(room.boardState.versionId > frozenVersion || room.boardState.activePlayerId === playerId,
+    'the computers resume once the human is back');
   room.dispose();
 });

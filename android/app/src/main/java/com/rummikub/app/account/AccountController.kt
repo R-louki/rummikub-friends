@@ -65,6 +65,10 @@ class AccountController(
     private val _friends = MutableStateFlow<List<Friend>>(emptyList())
     val friends: StateFlow<List<Friend>> = _friends.asStateFlow()
 
+    private val _lastSeen = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** Friend user id to the ISO date of his last connection. */
+    val lastSeen: StateFlow<Map<String, String>> = _lastSeen.asStateFlow()
+
     private val _history = MutableStateFlow<List<HistoryGame>>(emptyList())
     val history: StateFlow<List<HistoryGame>> = _history.asStateFlow()
 
@@ -271,6 +275,17 @@ class AccountController(
 
     suspend fun removeAvatar() = applyAvatar(null)
 
+    /** Uploads an already cropped JPEG as the profile photo. */
+    suspend fun setPhotoAvatarBytes(jpeg: ByteArray) {
+        val current = _auth.value as? AuthState.SignedIn ?: return
+        try {
+            val url = api.uploadAvatar(current.userId, jpeg)
+            applyAvatar("url:$url")
+        } catch (_: Exception) {
+            _messages.tryEmit("Envoi de la photo impossible. Réessayez.")
+        }
+    }
+
     /** Uploads a photo picked in the gallery (cropped to a small square) and uses it as avatar. */
     suspend fun setPhotoAvatar(context: Context, uri: android.net.Uri) {
         val current = _auth.value as? AuthState.SignedIn ?: return
@@ -294,7 +309,9 @@ class AccountController(
     suspend fun refreshFriends() {
         val me = myUserId ?: return
         try {
-            _friends.value = api.friends(me)
+            val list = api.friends(me)
+            _friends.value = list
+            _lastSeen.value = api.lastSeen(list.filter { it.status == com.rummikub.core.network.FriendStatus.ACCEPTED }.map { it.userId })
         } catch (_: Exception) {
             // keep the previous list
         }

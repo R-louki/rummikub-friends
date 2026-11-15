@@ -35,6 +35,18 @@ object ImageUtils {
         return out.toByteArray()
     }
 
+    /** Decodes a picked image for the crop screen (about 1024 px on the short side, orientation applied). */
+    fun loadForCrop(context: Context, uri: Uri): Bitmap? = decode(context, uri, 1024)
+
+    /** Crops the square ([left], [top], [side]) of [source] and returns a [size] px JPEG. */
+    fun cropToJpeg(source: Bitmap, left: Int, top: Int, side: Int, size: Int = 256): ByteArray {
+        val cropped = Bitmap.createBitmap(source, left, top, side, side)
+        val scaled = Bitmap.createScaledBitmap(cropped, size, size, true)
+        val out = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
+        return out.toByteArray()
+    }
+
     private fun decode(context: Context, uri: Uri, targetShortSide: Int): Bitmap? = try {
         if (Build.VERSION.SDK_INT >= 28) {
             // ImageDecoder applies the EXIF orientation by itself
