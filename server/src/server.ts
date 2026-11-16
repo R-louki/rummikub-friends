@@ -7,21 +7,66 @@ import { createPacketHandler } from './network/packet-handler.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 
+type IceServer = { urls: string | string[]; username?: string; credential?: string };
+
+/**
+ * Short-lived Cloudflare Realtime TURN credentials (dashboard → Calls → TURN, needs
+ * CF_TURN_KEY_ID and CF_TURN_API_TOKEN env vars), cached until shortly before they expire.
+ * Returns null when not configured, or when Cloudflare could not be reached and no usable
+ * cached credentials remain.
+ */
+let cfIceServersCache: { servers: IceServer[]; expiresAt: number } | null = null;
+
+async function fetchCloudflareIceServers(): Promise<IceServer[] | null> {
+  const keyId = process.env.CF_TURN_KEY_ID;
+  const apiToken = process.env.CF_TURN_API_TOKEN;
+  if (!keyId || !apiToken) return null;
+
+  const now = Date.now();
+  if (cfIceServersCache && cfIceServersCache.expiresAt > now) return cfIceServersCache.servers;
+
+  const ttlSeconds = 24 * 60 * 60;
+  try {
+    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${keyId}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: ttlSeconds }),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data: any = await res.json();
+    if (!Array.isArray(data.iceServers) || data.iceServers.length === 0) throw new Error('réponse vide');
+    // Refresh well before the real expiry so a slow Cloudflare never hands out a dead credential.
+    cfIceServersCache = { servers: data.iceServers, expiresAt: now + (ttlSeconds - 600) * 1000 };
+    return cfIceServersCache.servers;
+  } catch (err: any) {
+    console.error('[ICE] Identifiants TURN Cloudflare indisponibles:', err?.message);
+    return cfIceServersCache?.servers ?? null;
+  }
+}
+
 /**
  * ICE servers handed to the phones for live voice. STUN is always included.
  *
  * Without a TURN relay, two phones that cannot reach each other directly (common on mobile data,
  * behind a symmetric NAT) simply never hear each other for the rest of the match: STUN only helps
- * discover the public address, it cannot relay the actual audio. A dedicated relay is added when
- * configured through TURN_URLS (comma separated, e.g. "turn:host:3478,turns:host:443?transport=tcp"),
- * TURN_USERNAME and TURN_CREDENTIAL environment variables; until that is set up, the Open Relay
- * Project's free public TURN (openrelay.metered.ca, no account needed, published for exactly this
- * use) is included as a fallback so voice still has a relay path.
+ * discover the public address, it cannot relay the actual audio. The most reliable relay, Cloudflare
+ * Realtime TURN, is used when CF_TURN_KEY_ID/CF_TURN_API_TOKEN are set; otherwise a self-hosted or
+ * paid relay configured through TURN_URLS (comma separated, e.g. "turn:host:3478,turns:host:443?transport=tcp"),
+ * TURN_USERNAME and TURN_CREDENTIAL; and failing that, the Open Relay Project's free public TURN
+ * (openrelay.metered.ca, no account needed) so voice always has a relay path.
  */
-function buildIceServers(): Array<{ urls: string[]; username?: string; credential?: string }> {
-  const servers: Array<{ urls: string[]; username?: string; credential?: string }> = [
+async function buildIceServers(): Promise<IceServer[]> {
+  const servers: IceServer[] = [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
   ];
+
+  const cloudflare = await fetchCloudflareIceServers();
+  if (cloudflare) {
+    servers.push(...cloudflare);
+    return servers;
+  }
+
   const turnUrls = (process.env.TURN_URLS ?? '').split(',').map(s => s.trim()).filter(Boolean);
   if (turnUrls.length > 0 && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
     servers.push({
@@ -80,8 +125,16 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.url?.startsWith('/ice-servers')) {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ iceServers: buildIceServers() }));
+    buildIceServers()
+      .then(iceServers => {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ iceServers }));
+      })
+      .catch(err => {
+        console.error('[ICE] /ice-servers:', err?.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ iceServers: [] }));
+      });
     return;
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
