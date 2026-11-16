@@ -27,6 +27,11 @@ export function createPacketHandler(
   const REACTIONS = ['👍', '😂', '😮', '😡', '👏', '🔥', '🤔', '😭'];
   const lastReactionAt = new Map<string, number>();
 
+  // An invitation sent while the friend's app is closed is not lost: it waits here and is
+  // delivered as soon as that friend logs back in (one pending invite per recipient, latest wins).
+  const INVITE_TTL_MS = 2 * 60_000;
+  const pendingInvites = new Map<string, { roomCode: string; fromUserId: string; fromPseudo: string; expiresAt: number }>();
+
   /** The name shown at the table: the account pseudo when logged in, the typed name otherwise. */
   const identityFor = (ws: WebSocket, typedName: string | undefined, fallback: string) => {
     const account = sessions.accountOf(ws);
@@ -67,6 +72,22 @@ export function createPacketHandler(
     sessions.bind(ws, account);
     backend.touch(account.userId).catch((err: any) => console.error('[Auth] présence:', err?.message));
     send(ws, { type: 'auth_res', ok: true, userId: account.userId, pseudo: account.pseudo, avatar: account.avatar ?? null, needsPseudo: !account.pseudo });
+    deliverPendingInvite(ws, account.userId);
+  }
+
+  /** Hands over an invite that arrived while this player was offline, if it is still valid. */
+  function deliverPendingInvite(ws: WebSocket, userId: string): void {
+    const pending = pendingInvites.get(userId);
+    if (!pending) return;
+    pendingInvites.delete(userId);
+    if (pending.expiresAt < Date.now()) return;
+    if (!roomManager.getRoom(pending.roomCode)?.isJoinable) return;
+    send(ws, {
+      type: 'room_invite_evt',
+      roomCode: pending.roomCode,
+      fromUserId: pending.fromUserId,
+      fromPseudo: pending.fromPseudo
+    });
   }
 
   async function handlePresence(ws: WebSocket): Promise<void> {
@@ -104,7 +125,16 @@ export function createPacketHandler(
         fromPseudo: account.pseudo ?? 'Un ami'
       });
     }
-    send(ws, { type: 'invite_res', friendUserId, delivered: targets.length > 0 });
+    const delivered = targets.length > 0;
+    if (!delivered) {
+      pendingInvites.set(friendUserId, {
+        roomCode: ctx.room.roomCode,
+        fromUserId: account.userId,
+        fromPseudo: account.pseudo ?? 'Un ami',
+        expiresAt: Date.now() + INVITE_TTL_MS
+      });
+    }
+    send(ws, { type: 'invite_res', friendUserId, delivered, queued: !delivered });
   }
 
   function handle(ws: WebSocket, packet: any): void {

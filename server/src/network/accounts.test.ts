@@ -180,7 +180,49 @@ test('Friends: an offline friend is reported as not delivered', async () => {
   handler.handle(asWs(sami), { type: 'invite_friend_req', friendUserId: 'u-yas' });
   await tick();
   assert.strictEqual(sami.last('invite_res').delivered, false);
+  assert.strictEqual(sami.last('invite_res').queued, true);
   manager.getRoom(sami.last('room_joined_res').roomCode)?.dispose();
+});
+
+test('Friends: an invite sent while offline is queued and delivered as soon as the friend logs back in', async () => {
+  const { handler, tick, manager } = setup();
+  const sami = ws();
+  const yas = ws();
+  handler.handle(asWs(sami), { type: 'auth_req', accessToken: 'tok-sami' });
+  await tick();
+  handler.handle(asWs(sami), { type: 'create_room_req', config: cfg });
+  const code = sami.last('room_joined_res').roomCode;
+
+  // Yasmine's app is closed when the invite is sent: nothing to deliver to yet.
+  handler.handle(asWs(sami), { type: 'invite_friend_req', friendUserId: 'u-yas' });
+  await tick();
+  assert.strictEqual(sami.last('invite_res').queued, true);
+
+  // She opens the app a bit later: the queued invite reaches her right on login.
+  handler.handle(asWs(yas), { type: 'auth_req', accessToken: 'tok-yas' });
+  await tick();
+  assert.strictEqual(yas.last('room_invite_evt').roomCode, code);
+  assert.strictEqual(yas.last('room_invite_evt').fromPseudo, 'Sami');
+
+  manager.getRoom(code)?.dispose();
+});
+
+test('Friends: a queued invite is dropped if the table is gone by the time the friend logs back in', async () => {
+  const { handler, tick, manager } = setup();
+  const sami = ws();
+  const yas = ws();
+  handler.handle(asWs(sami), { type: 'auth_req', accessToken: 'tok-sami' });
+  await tick();
+  handler.handle(asWs(sami), { type: 'create_room_req', config: cfg });
+  const code = sami.last('room_joined_res').roomCode;
+  handler.handle(asWs(sami), { type: 'invite_friend_req', friendUserId: 'u-yas' });
+  await tick();
+
+  manager.closeRoom(code);
+
+  handler.handle(asWs(yas), { type: 'auth_req', accessToken: 'tok-yas' });
+  await tick();
+  assert.strictEqual(yas.ofType('room_invite_evt').length, 0);
 });
 
 test('History: a finished round is saved with the accounts of the human players only', async () => {

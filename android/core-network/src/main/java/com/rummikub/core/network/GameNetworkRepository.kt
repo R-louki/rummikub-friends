@@ -810,8 +810,11 @@ class GameNetworkRepository(
 
             is NetworkPacket.InviteResponse -> {
                 _errors.emit(
-                    if (packet.delivered) "Invitation envoyée."
-                    else "Cet ami n'est pas en ligne pour le moment."
+                    when {
+                        packet.delivered -> "Invitation envoyée."
+                        packet.queued -> "Il n'est pas en ligne : il recevra l'invitation dès qu'il ouvrira l'application."
+                        else -> "Cet ami n'est pas en ligne pour le moment."
+                    }
                 )
             }
 

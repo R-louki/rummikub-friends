@@ -9,9 +9,14 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 
 /**
  * ICE servers handed to the phones for live voice. STUN is always included.
- * A TURN relay (needed between some mobile networks) is added when configured through
- * TURN_URLS (comma separated, e.g. "turn:host:3478,turns:host:443?transport=tcp"),
- * TURN_USERNAME and TURN_CREDENTIAL environment variables.
+ *
+ * Without a TURN relay, two phones that cannot reach each other directly (common on mobile data,
+ * behind a symmetric NAT) simply never hear each other for the rest of the match: STUN only helps
+ * discover the public address, it cannot relay the actual audio. A dedicated relay is added when
+ * configured through TURN_URLS (comma separated, e.g. "turn:host:3478,turns:host:443?transport=tcp"),
+ * TURN_USERNAME and TURN_CREDENTIAL environment variables; until that is set up, the Open Relay
+ * Project's free public TURN (openrelay.metered.ca, no account needed, published for exactly this
+ * use) is included as a fallback so voice still has a relay path.
  */
 function buildIceServers(): Array<{ urls: string[]; username?: string; credential?: string }> {
   const servers: Array<{ urls: string[]; username?: string; credential?: string }> = [
@@ -23,6 +28,16 @@ function buildIceServers(): Array<{ urls: string[]; username?: string; credentia
       urls: turnUrls,
       username: process.env.TURN_USERNAME,
       credential: process.env.TURN_CREDENTIAL
+    });
+  } else {
+    servers.push({
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
     });
   }
   return servers;

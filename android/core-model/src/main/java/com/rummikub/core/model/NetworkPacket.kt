@@ -327,7 +327,7 @@ sealed class NetworkPacket {
 
     @Serializable
     @SerialName("invite_res")
-    data class InviteResponse(val friendUserId: String, val delivered: Boolean) : NetworkPacket()
+    data class InviteResponse(val friendUserId: String, val delivered: Boolean, val queued: Boolean = false) : NetworkPacket()
 
     @Serializable
     @SerialName("room_invite_evt")
