@@ -160,6 +160,51 @@ object MoveAssistant {
         return null
     }
 
+    // ------------------------------------------------------------------ retrait d'une tuile
+
+    /**
+     * Retire [tileId] de [meld]. Un groupe (même numéro, couleurs différentes) reste d'un seul tenant ;
+     * une suite à qui on enlève une tuile du milieu est coupée en deux, les extrémités ne la coupent pas.
+     * La combinaison d'origine garde son id (partie gauche), la partie droite en reçoit un nouveau.
+     */
+    fun removeTileSplitting(melds: List<MeldSet>, meld: MeldSet, tileId: String): List<MeldSet> {
+        val i = meld.tiles.indexOfFirst { it.id == tileId }
+        if (i < 0) return melds
+        val left = meld.tiles.subList(0, i).toList()
+        val right = meld.tiles.subList(i + 1, meld.tiles.size).toList()
+
+        val numbered = meld.tiles.filterNot { it.isJoker }
+        val isGroup = numbered.size >= 2 && numbered.map { it.number }.distinct().size == 1
+        if (isGroup) {
+            val rest = left + right
+            return melds.mapNotNull { m ->
+                when {
+                    m.id != meld.id -> m
+                    rest.isEmpty() -> null
+                    else -> m.copy(tiles = rest)
+                }
+            }
+        }
+
+        val result = ArrayList<MeldSet>(melds.size + 1)
+        for (m in melds) {
+            if (m.id != meld.id) {
+                result += m
+                continue
+            }
+            when {
+                left.isEmpty() && right.isEmpty() -> Unit
+                left.isEmpty() -> result += m.copy(tiles = right)
+                right.isEmpty() -> result += m.copy(tiles = left)
+                else -> {
+                    result += m.copy(tiles = left)
+                    result += MeldSet(tiles = right, gridRow = m.gridRow, gridCol = m.gridCol)
+                }
+            }
+        }
+        return result
+    }
+
     // ------------------------------------------------------------------ jokers
 
     /**

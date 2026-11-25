@@ -86,6 +86,9 @@ private class DragInfo(
     val downPos: Offset,
     val tileW: Float,
     val tileH: Float,
+    /** Dispositions au moment de la prise : rien ne bouge autour de la tuile tenue. */
+    val frozenBoard: com.rummikub.core.engine.layout.TableLayout,
+    val frozenRack: com.rummikub.core.engine.layout.RackLayout,
 )
 
 private enum class MeldKindStatus { VALID, INCOMPLETE, INVALID }
@@ -163,19 +166,19 @@ fun TableSurface(
         val boardTileW = remember(meldSizes, boardW, boardAreaH) {
             TableLayouter.fitTileWidth(meldSizes.map { n -> List(n) { "$it" } }, boardW, boardAreaH, 22f * dp, 66f * dp)
         }
-        val shownMelds = melds.map { m -> m.tiles.filter { it.id !in dragIds }.map { it.id } }
-        val boardBase = TableLayouter.layout(shownMelds, boardW, boardAreaH, boardTileW)
+        val shownMelds = melds.map { m -> m.tiles.map { it.id } }
+        // pendant un geste, la disposition est celle de la prise : rien ne bouge, la cible ne se dérobe jamais
+        val boardBase = drag?.frozenBoard ?: TableLayouter.layout(shownMelds, boardW, boardAreaH, boardTileW)
         val maxScroll = max(0f, boardBase.contentHeight - boardAreaH)
         if (scrollY > maxScroll) scrollY = maxScroll
 
-        val shownRackIds = rackIds.filter { it !in dragIds }
-        val rackBase = RackLayouter.layout(shownRackIds, rackW, rackBudget, rackTileW)
+        val rackBase = drag?.frozenRack ?: RackLayouter.layout(rackIds, rackW, rackBudget, rackTileW)
 
         // ------------------------------------------------------------------ cible du dépôt (calculée à la volée)
         val geo = rememberUpdatedState(
             Geo(boardBase, rackBase, pad, scrollY, boardAreaH, rackX0, rackY0 + rackTop, rackY0, boardTileW, newTileIds, isMyTurn),
         )
-        val dragLift = (drag?.tileH ?: 0f) * 0.8f
+        val dragLift = (drag?.tileH ?: 0f) * 0.55f
         val currentDragLift = rememberUpdatedState(dragLift)
         val target by remember {
             derivedStateOf {
@@ -204,32 +207,9 @@ fun TableSurface(
             lastHaptic = effectiveTarget
         }
 
-        // ------------------------------------------------------------------ dispositions affichées (avec trou d'insertion)
-        val count = drag?.ids?.size ?: 1
-        val previewSpec: TablePreview? = when (val t = effectiveTarget) {
-            is LayoutTarget.Meld -> TablePreview(t.index, t.at, count)
-            LayoutTarget.NewMeld -> TablePreview(null, 0, count)
-            else -> null
-        }
-        // si le trou d'insertion fait déborder le plateau, les tuiles rétrécissent le temps du glisser
-        var shownTileW = boardTileW
-        if (previewSpec != null &&
-            TableLayouter.layout(shownMelds, boardW, boardAreaH, boardTileW, previewSpec).contentHeight > boardAreaH + 1f
-        ) {
-            val ghostIds = List(count) { "ghost$it" }
-            val withGhost = shownMelds.toMutableList()
-            val ghostMeld = previewSpec.meld
-            if (ghostMeld == null) withGhost.add(ghostIds) else if (ghostMeld in withGhost.indices) {
-                withGhost[ghostMeld] = withGhost[ghostMeld] + ghostIds
-            }
-            shownTileW = min(boardTileW, TableLayouter.fitTileWidth(withGhost, boardW, boardAreaH, 22f * dp, boardTileW))
-        }
-        val boardShown = if (previewSpec != null) {
-            TableLayouter.layout(shownMelds, boardW, boardAreaH, shownTileW, previewSpec)
-        } else boardBase
-        val rackShown = (effectiveTarget as? LayoutTarget.Rack)?.let {
-            RackLayouter.layout(shownRackIds, rackW, rackBudget, rackTileW, it.index.coerceIn(0, shownRackIds.size), count)
-        } ?: rackBase
+        // ------------------------------------------------------------------ dispositions affichées : figées pendant un geste
+        val boardShown = boardBase
+        val rackShown = rackBase
 
         // ------------------------------------------------------------------ rectangles cibles de chaque tuile
         val boardOffset = Offset(pad, pad - scrollY)
@@ -250,6 +230,11 @@ fun TableSurface(
         val allTiles = HashMap<String, Tile>()
         melds.forEach { m -> m.tiles.forEach { allTiles[it.id] = it } }
         rackTiles.forEach { allTiles[it.id] = it }
+
+        LaunchedEffect(allTiles.keys) {
+            val d = drag
+            if (d != null && d.ids.any { it !in allTiles.keys }) drag = null
+        }
 
         // tuiles apparues après le premier affichage : elles arrivent en volant
         val known = remember { HashSet<String>().apply { addAll(allTiles.keys) } }
@@ -290,7 +275,7 @@ fun TableSurface(
                         val g = ctx.value
                         // les boutons du chevalet gèrent leurs propres touchers
                         if (down.position.y >= g.rackY && down.position.x >= g.w - g.toolsW) return@awaitEachGesture
-                        val hit = g.tileAt(down.position)
+                        val hit = g.tileAt(down.position) ?: g.edgeAt(down.position)
                         val canDrag = hit != null && (hit.fromRack || g.isMyTurn)
                         var dragging = false
                         var held = false
@@ -305,7 +290,10 @@ fun TableSurface(
                             if (event == null) {
                                 held = true
                                 view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                                currentChain.value(g.chainFrom(hit!!, currentMelds.value))
+                                // Sur la table, rester appuyé ne choisit plus les tuiles suivantes : on emporterait plusieurs
+                                // tuiles sans l'avoir voulu et le pli se casserait. Le chevalet garde ce raccourci.
+                                if (hit!!.blockIds != null) currentChain.value(hit.blockIds)
+                                else if (hit.fromRack) currentChain.value(g.chainFrom(hit, currentMelds.value))
                                 continue
                             }
                             val ch = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -319,7 +307,10 @@ fun TableSurface(
                                         dispatchDrop(d, t, currentMelds.value, currentDrop.value)
                                     }
                                 } else if (!scrolling && !held) {
-                                    if (hit != null) {
+                                    if (hit != null && hit.blockIds != null) {
+                                        // un toucher sur le bord d'une combinaison la sélectionne en entier
+                                        currentChain.value(hit.blockIds)
+                                    } else if (hit != null) {
                                         val now = System.currentTimeMillis()
                                         if (tapState.id == hit.tile.id && now - tapState.time < 320) {
                                             tapState.id = null
@@ -339,12 +330,12 @@ fun TableSurface(
                             if (!dragging && !scrolling && moved.getDistance() > slop * com.rummikub.app.ui.dnd.DragSettings.slopFactor) {
                                 if (hit != null && canDrag) {
                                     dragging = true
-                                    val ids = if (hit.tile.id in g.selectedIds && g.selectedIds.size > 1) {
+                                    val ids = hit.blockIds ?: if (hit.tile.id in g.selectedIds && g.selectedIds.size > 1) {
                                         listOf(hit.tile.id) + g.selectedIds.filter { it != hit.tile.id }
                                     } else listOf(hit.tile.id)
                                     val center = Offset(hit.box.cx, hit.box.cy)
                                     dragPos = ch.position
-                                    drag = DragInfo(ids, hit.tile.id, hit.fromRack, center, down.position, hit.box.w, hit.box.h)
+                                    drag = DragInfo(ids, hit.tile.id, hit.fromRack, center, down.position, hit.box.w, hit.box.h, g.board, g.rack)
                                     view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                 } else if (hit == null && g.maxScroll > 0f && down.position.y < g.rackY) {
                                     scrolling = true
@@ -383,14 +374,6 @@ fun TableSurface(
                                 ),
                             )
                             for (g in grain) drawCircle(g.color, radius = g.r * dp, center = Offset(g.x, g.y))
-                            if (highlightBoard && isMyTurn) {
-                                drawRoundRect(
-                                    DropCyan.copy(alpha = 0.10f),
-                                    topLeft = Offset(pad, pad),
-                                    size = Size(size.width - 2 * pad, boardH - 2 * pad),
-                                    cornerRadius = CornerRadius(18f * dp),
-                                )
-                            }
                         }
                     },
             )
@@ -425,6 +408,69 @@ fun TableSurface(
                             color = if (hovered) DropCyan else InvalidRed,
                         )
                     }
+                }
+            }
+
+            // ---------------------------------------------------------------- poignées : on peut saisir une combinaison par ses bords
+            if (isMyTurn && drag == null) {
+                for (frame in boardShown.melds) {
+                    val first = frame.tiles.firstOrNull()?.second ?: continue
+                    val last = frame.tiles.last().second
+                    key("grip${melds.getOrNull(frame.index)?.id}") {
+                        MeldGrips(
+                            left = first.x + boardOffset.x,
+                            right = last.right + boardOffset.x,
+                            top = first.y + boardOffset.y,
+                            height = first.h,
+                            tileW = first.w,
+                        )
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------------- origine de la tuile tenue + repère d'insertion
+            drag?.let { d ->
+                for (id in d.ids) targets[id]?.let { GhostSlot(it, zi = 0.8f, faint = true) }
+                when (val t = effectiveTarget) {
+                    is LayoutTarget.Meld -> {
+                        val frame = boardShown.melds.firstOrNull { it.index == t.index }
+                        if (frame != null && frame.tiles.isNotEmpty()) {
+                            val tl = frame.tiles
+                            val gap = boardTileW * 0.03f
+                            val x = when {
+                                t.at <= 0 -> tl.first().second.x - gap - boardTileW * 0.02f
+                                t.at >= tl.size -> tl.last().second.right + gap + boardTileW * 0.02f
+                                else -> (tl[t.at - 1].second.right + tl[t.at].second.x) / 2f
+                            }
+                            val ref = tl.first().second
+                            CaretBar(Rect(x + boardOffset.x, ref.y + boardOffset.y - ref.h * 0.28f, x + boardOffset.x, ref.bottom + boardOffset.y + ref.h * 0.28f))
+                        }
+                    }
+                    is LayoutTarget.Rack -> {
+                        val sl = rackShown.slots
+                        if (sl.isNotEmpty()) {
+                            val gap = rackTileW * 0.04f
+                            val i = t.index.coerceIn(0, sl.size)
+                            val ref = (if (i < sl.size) sl[i] else sl.last()).second
+                            val x = when {
+                                i >= sl.size -> sl.last().second.right + gap
+                                i == 0 || sl[i - 1].second.y != ref.y -> ref.x - gap
+                                else -> (sl[i - 1].second.right + ref.x) / 2f
+                            }
+                            CaretBar(Rect(x + rackOffset.x, ref.y + rackOffset.y - ref.h * 0.2f, x + rackOffset.x, ref.bottom + rackOffset.y + ref.h * 0.1f))
+                        }
+                    }
+                    LayoutTarget.NewMeld -> NewMeldTag(
+                        Modifier
+                            .zIndex(12f)
+                            .offset {
+                                IntOffset(
+                                    (dragPos.x - 70f * dp).roundToInt(),
+                                    (dragPos.y + d.tileH * 0.30f).roundToInt(),
+                                )
+                            },
+                    )
+                    LayoutTarget.None -> Unit
                 }
             }
 
@@ -576,7 +622,15 @@ private class Geo(
     val isMyTurn: Boolean,
 )
 
-private class TileHit(val tile: Tile, val fromRack: Boolean, val box: com.rummikub.core.engine.layout.Box, val meldId: String?, val indexInMeld: Int)
+private class TileHit(
+    val tile: Tile,
+    val fromRack: Boolean,
+    val box: com.rummikub.core.engine.layout.Box,
+    val meldId: String?,
+    val indexInMeld: Int,
+    /** Non nul quand on a saisi une combinaison entière par son bord. */
+    val blockIds: List<String>? = null,
+)
 
 private class GestureCtx(
     val board: com.rummikub.core.engine.layout.TableLayout,
@@ -611,6 +665,30 @@ private class GestureCtx(
                 if (bb.inflate(2f, 2f).contains(p.x, p.y)) {
                     return tiles[id]?.let { TileHit(it, false, bb, "${frame.index}", i) }
                 }
+            }
+        }
+        return null
+    }
+
+    /** Le bord d'une combinaison (juste avant sa première tuile ou après sa dernière) la saisit en entier. */
+    fun edgeAt(p: Offset): TileHit? {
+        if (!isMyTurn || p.y >= rackY) return null
+        val cx = p.x - pad
+        val cy = p.y - pad + scrollY
+        val zone = boardTileW * 0.34f
+        for (frame in board.melds) {
+            val first = frame.tiles.firstOrNull() ?: continue
+            val last = frame.tiles.last().second
+            val top = first.second.y - first.second.h * 0.12f
+            val bottom = first.second.bottom + first.second.h * 0.12f
+            if (cy < top || cy > bottom) continue
+            val left = cx >= first.second.x - zone && cx < first.second.x
+            val right = cx > last.right && cx <= last.right + zone
+            if (left || right) {
+                val b = first.second
+                val box = com.rummikub.core.engine.layout.Box(b.x + pad, b.y + pad - scrollY, b.w, b.h)
+                val tile = tiles[first.first] ?: continue
+                return TileHit(tile, false, box, null, 0, blockIds = frame.tiles.map { it.first })
             }
         }
         return null
@@ -692,14 +770,21 @@ private fun dispatchDrop(
     onDrop: (List<String>, String, DropTarget, Int) -> Unit,
 ) {
     when (target) {
-        is LayoutTarget.Rack -> onDrop(d.ids, d.primary, DropTarget.Rack, target.index)
+        is LayoutTarget.Rack -> {
+            // l'index visé compte toutes les tuiles du chevalet, y compris celles qu'on tient : on les retire du compte
+            val order = d.frozenRack.slots.map { it.first }
+            val idx = if (d.fromRack) {
+                target.index - d.ids.count { id -> order.indexOf(id).let { it in 0 until target.index } }
+            } else target.index
+            onDrop(d.ids, d.primary, DropTarget.Rack, idx.coerceAtLeast(0))
+        }
         LayoutTarget.NewMeld -> onDrop(d.ids, d.primary, DropTarget.NewMeld, 0)
         is LayoutTarget.Meld -> {
             val meld = melds.getOrNull(target.index) ?: return
-            // l'index affiché ignore la tuile tenue ; le contrôleur compte avec elle dans la même combinaison
-            val sourceIndex = meld.tiles.indexOfFirst { it.id == d.primary }
-            val at = if (sourceIndex >= 0 && target.at > sourceIndex) target.at + 1 else target.at
-            onDrop(d.ids, d.primary, DropTarget.MeldPosition(meld.id, at), 0)
+            // déposer une combinaison entière sur elle-même ne change rien
+            if (d.ids.size > 1 && meld.tiles.map { it.id }.toSet() == d.ids.toSet()) return
+            // l'index vient de la disposition figée (tuile tenue comprise) : c'est celui qu'attend le contrôleur
+            onDrop(d.ids, d.primary, DropTarget.MeldPosition(meld.id, target.at), 0)
         }
         LayoutTarget.None -> Unit
     }
@@ -802,6 +887,64 @@ private fun MeldUnderline(box: Rect, color: Color) {
                 drawRoundRect(color.copy(alpha = 0.95f), cornerRadius = CornerRadius(3f * d))
                 // petite lueur sous le trait
                 drawRoundRect(color.copy(alpha = 0.25f), topLeft = Offset(0f, 2f * d), size = Size(size.width, size.height + 3f * d), cornerRadius = CornerRadius(4f * d))
+            },
+    )
+}
+
+/** Barre verticale lumineuse : l'endroit exact où la tuile va s'insérer. */
+@Composable
+private fun CaretBar(rect: Rect) {
+    val density = LocalDensity.current
+    val d = density.density
+    val anim = remember { Animatable(rect, Rect.VectorConverter, Rect.VisibilityThreshold) }
+    LaunchedEffect(rect) {
+        anim.animateTo(rect, spring(dampingRatio = 0.8f, stiffness = 900f, visibilityThreshold = Rect.VisibilityThreshold))
+    }
+    val barW = 5f * d
+    Box(
+        Modifier
+            .zIndex(11f)
+            .offset { IntOffset((anim.value.left - barW * 2).roundToInt(), anim.value.top.roundToInt()) }
+            .size(with(density) { (barW * 4).toDp() }, with(density) { rect.height.toDp() })
+            .graphicsLayer { scaleY = if (rect.height > 0f) anim.value.height / rect.height else 1f; transformOrigin = TransformOrigin(0.5f, 0f) }
+            .drawBehind {
+                drawRoundRect(DropCyan.copy(alpha = 0.22f), Offset(0f, -3f * d), Size(size.width, size.height + 6f * d), CornerRadius(barW * 2))
+                drawRoundRect(DropCyan, Offset(barW * 1.5f, 0f), Size(barW, size.height), CornerRadius(barW / 2))
+            },
+    )
+}
+
+/** Étiquette près du doigt : la tuile va former une nouvelle combinaison. */
+@Composable
+private fun NewMeldTag(modifier: Modifier) {
+    Text(
+        "+ nouvelle combinaison",
+        color = Color(0xFF062414),
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Black,
+        modifier = modifier
+            .background(DropCyan, RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+    )
+}
+
+/** Deux poignées discrètes, de part et d'autre d'une combinaison : on la saisit en entier par là. */
+@Composable
+private fun MeldGrips(left: Float, right: Float, top: Float, height: Float, tileW: Float) {
+    val density = LocalDensity.current
+    val d = density.density
+    val zone = tileW * 0.34f
+    Box(
+        Modifier
+            .zIndex(0.6f)
+            .offset { IntOffset((left - zone).roundToInt(), top.roundToInt()) }
+            .size(with(density) { (right - left + 2 * zone).toDp() }, with(density) { height.toDp() })
+            .drawBehind {
+                val w = 3.2f * d
+                val h = height * 0.42f
+                val y = (size.height - h) / 2f
+                drawRoundRect(Color(0x55FFFFFF), Offset(zone * 0.45f - w / 2, y), Size(w, h), CornerRadius(w / 2))
+                drawRoundRect(Color(0x55FFFFFF), Offset(size.width - zone * 0.45f - w / 2, y), Size(w, h), CornerRadius(w / 2))
             },
     )
 }
@@ -978,7 +1121,7 @@ private fun animateColorAsStateCompat(target: Color) =
     androidx.compose.animation.animateColorAsState(target, tween(200), label = "frame_color")
 
 @Composable
-private fun GhostSlot(box: Rect, zi: Float) {
+private fun GhostSlot(box: Rect, zi: Float, faint: Boolean = false) {
     val density = LocalDensity.current
     val anim = remember { Animatable(box, Rect.VectorConverter, Rect.VisibilityThreshold) }
     LaunchedEffect(box) {
@@ -992,11 +1135,11 @@ private fun GhostSlot(box: Rect, zi: Float) {
             .drawBehind {
                 val d = density.density
                 drawRoundRect(
-                    DropCyan.copy(alpha = 0.16f),
+                    DropCyan.copy(alpha = if (faint) 0.05f else 0.16f),
                     cornerRadius = CornerRadius(8f * d),
                 )
                 drawRoundRect(
-                    DropCyan.copy(alpha = 0.9f),
+                    DropCyan.copy(alpha = if (faint) 0.35f else 0.9f),
                     cornerRadius = CornerRadius(8f * d),
                     style = Stroke(width = 2f * d, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f * d, 7f * d))),
                 )
