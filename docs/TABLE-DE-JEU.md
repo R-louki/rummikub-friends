@@ -24,8 +24,8 @@ l'ancien chevalet à cases et le glisser-déposer du système Android.
   distribuée ou posée par un adversaire.
 - **Glisser avec aperçu en direct** : la tuile se soulève au-dessus du doigt, un trou s'ouvre là où
   elle va tomber, la combinaison visée s'illumine. Un lot de tuiles sélectionnées se glisse en bloc.
-- **Pastille sur chaque combinaison** : ✓ avec les points si elle est valide, `n/3` si elle est
-  incomplète, ✕ si elle est invalide. En première pose, une jauge `points / seuil` reste affichée.
+- **Première pose** : l'indicateur `points / seuil` est gravé sur la face avant du socle tant que la
+  première pose n'est pas faite.
 
 ## Aides à la manipulation
 
