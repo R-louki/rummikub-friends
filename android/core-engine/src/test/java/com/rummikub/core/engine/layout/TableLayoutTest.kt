@@ -133,4 +133,23 @@ class TableLayoutTest {
         assertTrue(base.tileBox("r3") != gap.tileBox("r3"))
         assertEquals(5, gap.slots.size)
     }
+
+    @Test
+    fun `les rangees du chevalet sont equilibrees`() {
+        val tiles = List(14) { "r$it" }
+        val l = RackLayouter.layout(tiles, 700f, 400f, 60f) // 10 par rangée au maximum : 2 rangées
+        assertEquals(2, l.rowStarts.size)
+        assertEquals(7, l.rowStarts[1])
+        assertEquals(14, l.slots.size)
+    }
+
+    @Test
+    fun `le chevalet a toujours deux niveaux et le niveau avant masque le bas du niveau arriere`() {
+        val l = RackLayouter.layout(List(4) { "r$it" }, 700f, 400f, 50f)
+        assertEquals(2, l.tiers)
+        assertEquals(listOf(0, 2), l.rowStarts)
+        // le niveau avant est décalé de moins qu'une hauteur de tuile : les tuiles se recouvrent en hauteur
+        assertTrue(l.rowTops[1] - l.rowTops[0] < l.tileH)
+        assertEquals(l.tileH * RackLayouter.TIER_STEP, l.rowTops[1] - l.rowTops[0], 0.01f)
+    }
 }

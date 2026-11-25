@@ -32,6 +32,7 @@ import com.rummikub.core.model.TileColor
 @Composable
 fun TableDemo(full: Boolean) {
     fun t(c: TileColor, n: Int, set: Int = 1) = Tile.number(c, n, set)
+    fun r(c: TileColor, n: Int) = Tile.number(c, n, 3)
     val initialMelds = if (full) {
         listOf(
             MeldSet("m1", (4..7).map { t(TileColor.BLUE, it) }),
@@ -52,10 +53,10 @@ fun TableDemo(full: Boolean) {
         )
     }
     val initialRack = listOf(
-        t(TileColor.BLUE, 9), t(TileColor.RED, 9, 2), t(TileColor.BLUE, 7, 2), t(TileColor.YELLOW, 2), t(TileColor.BLACK, 9, 2),
-        t(TileColor.BLUE, 8), t(TileColor.RED, 4), t(TileColor.BLACK, 12), t(TileColor.YELLOW, 9, 2), t(TileColor.RED, 5),
-        t(TileColor.BLUE, 13), t(TileColor.RED, 13), t(TileColor.YELLOW, 6), t(TileColor.BLACK, 11),
-    ) + if (full) listOf(Tile.joker(2), t(TileColor.BLACK, 1), t(TileColor.YELLOW, 11), t(TileColor.RED, 2), t(TileColor.BLUE, 3), t(TileColor.BLACK, 7)) else emptyList()
+        r(TileColor.BLUE, 9), r(TileColor.RED, 9), r(TileColor.BLUE, 7), r(TileColor.YELLOW, 2), r(TileColor.BLACK, 9),
+        r(TileColor.BLUE, 8), r(TileColor.RED, 4), r(TileColor.BLACK, 12), r(TileColor.YELLOW, 9), r(TileColor.RED, 5),
+        r(TileColor.BLUE, 13), r(TileColor.RED, 13), r(TileColor.YELLOW, 6), r(TileColor.BLACK, 11),
+    ) + if (full) listOf(Tile.joker(3), r(TileColor.BLACK, 1), r(TileColor.YELLOW, 11), r(TileColor.RED, 2), r(TileColor.BLUE, 3), r(TileColor.BLACK, 7)) else emptyList()
 
     var melds by remember { mutableStateOf(initialMelds) }
     var rack by remember { mutableStateOf(initialRack) }

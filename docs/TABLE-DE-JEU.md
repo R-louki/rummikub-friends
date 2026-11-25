@@ -8,9 +8,17 @@ l'ancien chevalet à cases et le glisser-déposer du système Android.
 
 - **Tuiles vectorielles** (`TileFace`) : nettes à toute densité d'écran, avec un repère de forme
   sous le chiffre (● ■ ▲ ◆) pour distinguer les couleurs sans les voir.
+- **Plateau sans cadres** : les combinaisons sont simplement des tuiles séparées par un espace, sur un
+  feutre texturé. Pas de rectangle, pas de total. Seul un trait rouge souligne une combinaison invalide,
+  et un trait bleu celle où la tuile tenue va tomber.
 - **Mise en page automatique** : la taille des tuiles du plateau s'adapte pour que toutes les
-  combinaisons tiennent sans défiler (de 22 dp à 66 dp). Le chevalet prend seulement la place dont
-  il a besoin, une ou deux rangées, le reste va au plateau.
+  combinaisons tiennent sans défiler (de 22 dp à 66 dp).
+- **Chevalet réaliste** : un socle en bois clair à deux niveaux, avec l'épaisseur du bois, le veinage et
+  un rebord qui passe devant le bas des tuiles. Le niveau avant masque le tiers du niveau arrière, ce qui
+  le rend compact : le reste de l'écran va au plateau. La progression de la première pose est gravée sur
+  la face avant du socle.
+- **Joueurs lisibles** : noms en 14 sp et nombre de tuiles dans une pastille en 18 sp, orange quand un
+  joueur n'a plus que 1 à 3 tuiles.
 - **Animations** : chaque tuile est un élément animé par ressort. Elle glisse à sa nouvelle place
   quand quelque chose change, vole du chevalet à la table, et arrive en volant quand elle est piochée,
   distribuée ou posée par un adversaire.

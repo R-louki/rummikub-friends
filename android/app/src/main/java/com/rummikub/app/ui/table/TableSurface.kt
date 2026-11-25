@@ -9,14 +9,18 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -33,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -42,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -138,14 +144,14 @@ fun TableSurface(
         val toolsW = 88f * dp
         val rackX0 = 6f * dp
         val rackW = w - toolsW - rackX0
-        val rackBudget = min(h * 0.42f, 210f * dp)
+        val rackBudget = min(h * 0.34f, 150f * dp)
         val rackIds = rackTiles.map { it.id }
         val rackTileW = remember(rackIds.size, rackW, rackBudget) {
-            RackLayouter.fitTileWidth(max(rackIds.size, 1), rackW, rackBudget, 24f * dp, 62f * dp)
+            RackLayouter.fitTileWidth(max(rackIds.size, 1), rackW, rackBudget, 22f * dp, 42f * dp)
         }
         val rackSizing = RackLayouter.layout(rackIds, rackW, rackBudget, rackTileW)
-        val rackTop = 4f * dp
-        val rackH = (rackSizing.contentHeight + rackTop + 6f * dp).coerceIn(66f * dp, rackBudget + 12f * dp)
+        val rackTop = 0f
+        val rackH = rackSizing.contentHeight + 12f * dp
         val boardH = h - rackH
         val rackY0 = boardH
 
@@ -200,11 +206,27 @@ fun TableSurface(
 
         // ------------------------------------------------------------------ dispositions affichées (avec trou d'insertion)
         val count = drag?.ids?.size ?: 1
-        val boardShown = when (val t = effectiveTarget) {
-            is LayoutTarget.Meld -> TableLayouter.layout(shownMelds, boardW, boardAreaH, boardTileW, TablePreview(t.index, t.at, count))
-            LayoutTarget.NewMeld -> TableLayouter.layout(shownMelds, boardW, boardAreaH, boardTileW, TablePreview(null, 0, count))
-            else -> boardBase
+        val previewSpec: TablePreview? = when (val t = effectiveTarget) {
+            is LayoutTarget.Meld -> TablePreview(t.index, t.at, count)
+            LayoutTarget.NewMeld -> TablePreview(null, 0, count)
+            else -> null
         }
+        // si le trou d'insertion fait déborder le plateau, les tuiles rétrécissent le temps du glisser
+        var shownTileW = boardTileW
+        if (previewSpec != null &&
+            TableLayouter.layout(shownMelds, boardW, boardAreaH, boardTileW, previewSpec).contentHeight > boardAreaH + 1f
+        ) {
+            val ghostIds = List(count) { "ghost$it" }
+            val withGhost = shownMelds.toMutableList()
+            val ghostMeld = previewSpec.meld
+            if (ghostMeld == null) withGhost.add(ghostIds) else if (ghostMeld in withGhost.indices) {
+                withGhost[ghostMeld] = withGhost[ghostMeld] + ghostIds
+            }
+            shownTileW = min(boardTileW, TableLayouter.fitTileWidth(withGhost, boardW, boardAreaH, 22f * dp, boardTileW))
+        }
+        val boardShown = if (previewSpec != null) {
+            TableLayouter.layout(shownMelds, boardW, boardAreaH, shownTileW, previewSpec)
+        } else boardBase
         val rackShown = (effectiveTarget as? LayoutTarget.Rack)?.let {
             RackLayouter.layout(shownRackIds, rackW, rackBudget, rackTileW, it.index.coerceIn(0, shownRackIds.size), count)
         } ?: rackBase
@@ -221,6 +243,9 @@ fun TableSurface(
         for ((id, b) in rackShown.slots) {
             targets[id] = Rect(b.x + rackOffset.x, b.y + rackOffset.y, b.right + rackOffset.x, b.bottom + rackOffset.y)
         }
+
+        val rackTierOf = HashMap<String, Int>()
+        rackShown.slots.forEachIndexed { i, (id, _) -> rackTierOf[id] = rackShown.rowStarts.indexOfLast { it <= i }.coerceAtLeast(0) }
 
         val allTiles = HashMap<String, Tile>()
         melds.forEach { m -> m.tiles.forEach { allTiles[it.id] = it } }
@@ -341,20 +366,34 @@ fun TableSurface(
         ) {
             val lift = currentDragLift
 
-            // ---------------------------------------------------------------- fond de la table
+            // ---------------------------------------------------------------- fond : feutre texturé (pas de cadre)
             val highlightBoard = hasSelection || (drag != null && effectiveTarget !is LayoutTarget.Rack && effectiveTarget != LayoutTarget.None)
-            Canvas(
+            Box(
                 Modifier
-                    .offset { IntOffset(pad.roundToInt(), pad.roundToInt()) }
-                    .size(with(density) { boardW.toDp() }, with(density) { boardAreaH.toDp() }),
-            ) {
-                drawRoundRect(Color(0x26000000), cornerRadius = CornerRadius(14f * dp))
-                drawRoundRect(
-                    color = if (highlightBoard && isMyTurn) DropCyan.copy(alpha = 0.55f) else Color(0x30FFD54F),
-                    cornerRadius = CornerRadius(14f * dp),
-                    style = Stroke(width = 2f * dp),
-                )
-            }
+                    .fillMaxSize()
+                    .drawWithCache {
+                        val grain = feltGrain(size.width, size.height)
+                        onDrawBehind {
+                            // légère vignette puis grain du feutre
+                            drawRect(
+                                Brush.radialGradient(
+                                    listOf(Color.Transparent, Color(0x33000000)),
+                                    center = Offset(size.width / 2f, size.height * 0.45f),
+                                    radius = size.maxDimension * 0.75f,
+                                ),
+                            )
+                            for (g in grain) drawCircle(g.color, radius = g.r * dp, center = Offset(g.x, g.y))
+                            if (highlightBoard && isMyTurn) {
+                                drawRoundRect(
+                                    DropCyan.copy(alpha = 0.10f),
+                                    topLeft = Offset(pad, pad),
+                                    size = Size(size.width - 2 * pad, boardH - 2 * pad),
+                                    cornerRadius = CornerRadius(18f * dp),
+                                )
+                            }
+                        }
+                    },
+            )
 
             if (melds.isEmpty() && drag == null) {
                 Text(
@@ -369,23 +408,23 @@ fun TableSurface(
                 )
             }
 
-            // ---------------------------------------------------------------- cadres des combinaisons
+            // ---------------------------------------------------------------- combinaisons : un simple soulignement si besoin
             val hoverMeld = (effectiveTarget as? LayoutTarget.Meld)?.index
             for (frame in boardShown.melds) {
                 val meld = melds.getOrNull(frame.index) ?: continue
                 key(meld.id) {
                     val status = remember(meld.tiles) { meldStatus(meld) }
-                    MeldFrameView(
-                        box = Rect(
-                            frame.box.x + boardOffset.x, frame.box.y + boardOffset.y,
-                            frame.box.right + boardOffset.x, frame.box.bottom + boardOffset.y,
-                        ),
-                        status = status.first,
-                        points = status.second,
-                        size = meld.tiles.size,
-                        hovered = hoverMeld == frame.index,
-                        headerH = frame.header.h,
-                    )
+                    val hovered = hoverMeld == frame.index
+                    // une combinaison invalide se voit ; une combinaison juste reste discrète (pas de total, pas de cadre)
+                    if (hovered || status.first == MeldKindStatus.INVALID) {
+                        MeldUnderline(
+                            box = Rect(
+                                frame.box.x + boardOffset.x, frame.box.y + boardOffset.y,
+                                frame.box.right + boardOffset.x, frame.box.bottom + boardOffset.y,
+                            ),
+                            color = if (hovered) DropCyan else InvalidRed,
+                        )
+                    }
                 }
             }
 
@@ -394,27 +433,24 @@ fun TableSurface(
                 GhostSlot(Rect(gb.x + boardOffset.x, gb.y + boardOffset.y, gb.right + boardOffset.x, gb.bottom + boardOffset.y), zi = 0.8f)
             }
 
-            // ---------------------------------------------------------------- chevalet (bois)
-            Box(
-                Modifier
-                    .zIndex(1.5f)
-                    .offset { IntOffset(0, rackY0.roundToInt()) }
-                    .size(with(density) { w.toDp() }, with(density) { rackH.toDp() })
-                    .graphicsLayer {
-                        shadowElevation = 14f * dp
-                        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
-                        clip = true
-                    }
-                    .background(Brush.verticalGradient(listOf(WoodBorder, WoodDarkBrown, Color(0xFF190C06))))
-                    .drawBehind {
-                        drawRoundRect(
-                            color = if (drag != null && effectiveTarget is LayoutTarget.Rack) DropCyan.copy(alpha = 0.55f) else Color(0x55FFFFFF),
-                            topLeft = Offset(2f * dp, 2f * dp),
-                            size = Size(size.width - 4f * dp, size.height),
-                            cornerRadius = CornerRadius(16f * dp),
-                            style = Stroke(width = 1.5f * dp),
-                        )
-                    },
+            // ---------------------------------------------------------------- socle du chevalet : deux niveaux, bois clair
+            val socleX = rackOffset.x + (rackW - rackSizing.panelWidth) / 2f
+            val rackDropActive = drag != null && effectiveTarget is LayoutTarget.Rack
+            RackSocle(
+                x = socleX,
+                y = rackOffset.y,
+                w = rackSizing.panelWidth,
+                h = rackSizing.contentHeight,
+                tileH = rackSizing.tileH,
+                tierTops = rackSizing.rowTops,
+                highlight = rackDropActive,
+            )
+            RackLip(
+                x = socleX,
+                y = rackOffset.y,
+                w = rackSizing.panelWidth,
+                h = rackSizing.contentHeight,
+                frontTop = (rackSizing.rowTops.lastOrNull() ?: 0f) + rackSizing.tileH * 0.80f,
             )
             for (gb in rackShown.ghosts) {
                 GhostSlot(Rect(gb.x + rackOffset.x, gb.y + rackOffset.y, gb.right + rackOffset.x, gb.bottom + rackOffset.y), zi = 1.6f)
@@ -441,7 +477,7 @@ fun TableSurface(
                         target = tr,
                         spawnFrom = if (spawn != null) (if (inRack) spawnRackFrom else spawnBoardFrom) else null,
                         spawnDelay = (spawn ?: 0) * 45L,
-                        baseZ = if (inRack) 2f else 1f,
+                        baseZ = if (inRack) 2f + 0.1f * (rackTierOf[id] ?: 0) else 1f,
                         mark = mark,
                         measurer = measurer,
                         dragRect = if (dragged) {
@@ -507,8 +543,12 @@ fun TableSurface(
                     threshold = initialThreshold,
                     modifier = Modifier
                         .zIndex(4f)
-                        .align(Alignment.TopStart)
-                        .offset { IntOffset((pad * 2).roundToInt(), (pad * 2).roundToInt()) },
+                        .offset {
+                            IntOffset(
+                                (rackOffset.x + rackW / 2f - 100f * dp).roundToInt(),
+                                (rackOffset.y + rackSizing.contentHeight - 25f * dp).roundToInt(),
+                            )
+                        },
                 )
             }
         }
@@ -558,7 +598,7 @@ private class GestureCtx(
 ) {
     fun tileAt(p: Offset): TileHit? {
         if (p.y >= rackY) {
-            for ((id, b) in rack.slots) {
+            for ((id, b) in rack.slots.asReversed()) {
                 val bb = com.rummikub.core.engine.layout.Box(b.x + rackX, b.y + rackOriginY, b.w, b.h)
                 if (bb.inflate(2f, 2f).contains(p.x, p.y)) return tiles[id]?.let { TileHit(it, true, bb, null, -1) }
             }
@@ -741,61 +781,196 @@ private fun FlyingTile(
 }
 
 @Composable
-private fun MeldFrameView(
-    box: Rect,
-    status: MeldKindStatus,
-    points: Int,
-    size: Int,
-    hovered: Boolean,
-    headerH: Float,
-) {
+private fun MeldUnderline(box: Rect, color: Color) {
     val density = LocalDensity.current
-    val anim = remember { Animatable(box, Rect.VectorConverter, Rect.VisibilityThreshold) }
-    LaunchedEffect(box) {
-        anim.animateTo(box, spring(dampingRatio = 0.8f, stiffness = 420f, visibilityThreshold = Rect.VisibilityThreshold))
+    val d = density.density
+    val target = Rect(box.left, box.bottom - 1f * d, box.right, box.bottom + 4f * d)
+    val anim = remember { Animatable(target, Rect.VectorConverter, Rect.VisibilityThreshold) }
+    LaunchedEffect(target) {
+        anim.animateTo(target, spring(dampingRatio = 0.8f, stiffness = 420f, visibilityThreshold = Rect.VisibilityThreshold))
     }
-    val accent = when (status) {
-        MeldKindStatus.VALID -> ValidGreen
-        MeldKindStatus.INCOMPLETE -> WarnAmber
-        MeldKindStatus.INVALID -> InvalidRed
-    }
-    val border by animateColorAsStateCompat(if (hovered) DropCyan else accent.copy(alpha = if (status == MeldKindStatus.VALID) 0.45f else 0.85f))
     Box(
         Modifier
             .zIndex(0.5f)
             .offset { IntOffset(anim.value.left.roundToInt(), anim.value.top.roundToInt()) }
-            .size(with(density) { box.width.toDp() }, with(density) { box.height.toDp() })
+            .size(with(density) { target.width.toDp() }, with(density) { target.height.toDp() })
             .graphicsLayer {
                 transformOrigin = TransformOrigin(0f, 0f)
-                scaleX = if (box.width > 0f) anim.value.width / box.width else 1f
-                scaleY = if (box.height > 0f) anim.value.height / box.height else 1f
+                scaleX = if (target.width > 0f) anim.value.width / target.width else 1f
             }
             .drawBehind {
-                val cr = CornerRadius(10f * density.density)
-                drawRoundRect(
-                    if (hovered) DropCyan.copy(alpha = 0.18f) else Color(0x14FFFFFF),
-                    cornerRadius = cr,
-                )
-                drawRoundRect(border, cornerRadius = cr, style = Stroke(width = 1.6f * density.density))
+                drawRoundRect(color.copy(alpha = 0.95f), cornerRadius = CornerRadius(3f * d))
+                // petite lueur sous le trait
+                drawRoundRect(color.copy(alpha = 0.25f), topLeft = Offset(0f, 2f * d), size = Size(size.width, size.height + 3f * d), cornerRadius = CornerRadius(4f * d))
             },
-    ) {
-        val chip = when (status) {
-            MeldKindStatus.VALID -> "✓ $points"
-            MeldKindStatus.INCOMPLETE -> "$size/3"
-            MeldKindStatus.INVALID -> "✕"
-        }
-        Text(
-            text = chip,
-            color = if (status == MeldKindStatus.INCOMPLETE) Color(0xFF3B2A00) else Color(0xFF062414),
-            fontSize = (headerH / density.density * 0.62f).coerceIn(8f, 13f).sp,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset(x = 4.dp, y = 2.dp)
-                .background(accent.copy(alpha = 0.95f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 5.dp, vertical = 0.dp),
+    )
+}
+
+private class FeltDot(val x: Float, val y: Float, val r: Float, val color: Color)
+
+/** Grain du feutre : milliers de points quasi invisibles, tirés une fois pour toutes. */
+private fun feltGrain(w: Float, h: Float): List<FeltDot> {
+    val rnd = java.util.Random(42)
+    val n = ((w * h) / 2600f).toInt().coerceIn(300, 6000)
+    return List(n) {
+        val light = rnd.nextBoolean()
+        FeltDot(
+            rnd.nextFloat() * w,
+            rnd.nextFloat() * h,
+            0.4f + rnd.nextFloat() * 0.5f,
+            if (light) Color(0x0AFFFFFF) else Color(0x14000000),
         )
     }
+}
+
+private class GrainLine(val y: Float, val amp: Float, val phase: Float, val alpha: Float, val width: Float)
+
+private val OakTop = Color(0xFFEBCB9A)
+private val OakMid = Color(0xFFD3A56A)
+private val OakBottom = Color(0xFFB98650)
+private val OakDark = Color(0xFF8A5B2E)
+private val OakDeep = Color(0xFF6A4322)
+
+/**
+ * Le socle : un vrai chevalet en bois clair à deux niveaux. On voit l'épaisseur du bois, le creux où
+ * reposent les tuiles, les deux étagères et le veinage. Dessiné en vectoriel.
+ */
+@Composable
+private fun RackSocle(x: Float, y: Float, w: Float, h: Float, tileH: Float, tierTops: List<Float>, highlight: Boolean) {
+    val density = LocalDensity.current
+    val d = density.density
+    val thick = 9f * d
+    Box(
+        Modifier
+            .zIndex(1.5f)
+            .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+            .size(with(density) { w.toDp() }, with(density) { (h + thick + 12f * d).toDp() })
+            .drawWithCache {
+                val rnd = java.util.Random(7)
+                val grain = List(46) { GrainLine(rnd.nextFloat() * h, 1f + rnd.nextFloat() * 3f, rnd.nextFloat() * 6f, 0.04f + rnd.nextFloat() * 0.07f, 0.6f + rnd.nextFloat() * 1.4f) }
+                onDrawBehind {
+                    val r = 18f * d
+                    // ombre portée sur le feutre
+                    for (i in 1..5) {
+                        drawRoundRect(
+                            Color.Black.copy(alpha = 0.075f),
+                            topLeft = Offset(-i * 2.2f * d, thick + i * 1.8f * d),
+                            size = Size(w + i * 4.4f * d, h),
+                            cornerRadius = CornerRadius(r + i * 2f * d),
+                        )
+                    }
+                    // épaisseur du bois (face avant)
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(OakDark, OakDeep), startY = thick, endY = h + thick),
+                        topLeft = Offset(0f, thick),
+                        size = Size(w, h),
+                        cornerRadius = CornerRadius(r),
+                    )
+                    // face supérieure
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(OakTop, OakMid, OakBottom), startY = 0f, endY = h),
+                        size = Size(w, h),
+                        cornerRadius = CornerRadius(r),
+                    )
+                    // veinage, découpé aux bords arrondis du bois
+                    val body = androidx.compose.ui.graphics.Path().apply {
+                        addRoundRect(androidx.compose.ui.geometry.RoundRect(0f, 0f, w, h, CornerRadius(r)))
+                    }
+                    clipPath(body) {
+                        for (g in grain) {
+                            val path = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(0f, g.y)
+                                var xx = 0f
+                                while (xx < w) {
+                                    xx = minOf(w, xx + 24f * d)
+                                    lineTo(xx, g.y + kotlin.math.sin((xx / (60f * d)) + g.phase) * g.amp * d)
+                                }
+                            }
+                            drawPath(path, Color(0xFF5B3716).copy(alpha = g.alpha), style = Stroke(width = g.width * d))
+                        }
+                    }
+                    // arête supérieure éclairée
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(Color(0xAAFFFFFF), Color(0x00FFFFFF)), endY = 12f * d),
+                        size = Size(w, h),
+                        cornerRadius = CornerRadius(r),
+                        style = Stroke(width = 2.2f * d),
+                    )
+                    // le creux où reposent les tuiles
+                    val inL = 10f * d
+                    val inT = 7f * d
+                    val inR = w - 10f * d
+                    val inB = h - 9f * d
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(Color(0xFF7A4E26), Color(0xFFA9763F), Color(0xFFC08B52)), startY = inT, endY = inB),
+                        topLeft = Offset(inL, inT),
+                        size = Size(inR - inL, inB - inT),
+                        cornerRadius = CornerRadius(12f * d),
+                    )
+                    // ombre intérieure en haut du creux
+                    drawRoundRect(
+                        Brush.verticalGradient(listOf(Color(0x66000000), Color(0x00000000)), startY = inT, endY = inT + 18f * d),
+                        topLeft = Offset(inL, inT),
+                        size = Size(inR - inL, 22f * d),
+                        cornerRadius = CornerRadius(12f * d),
+                    )
+                    // chaque niveau a son étagère : un trait clair puis un trait sombre
+                    for (top in tierTops) {
+                        val ly = top + tileH * 0.985f
+                        if (ly < inB) {
+                            drawLine(Color(0x66FFFFFF), Offset(inL + 6f * d, ly), Offset(inR - 6f * d, ly), strokeWidth = 1.6f * d)
+                            drawLine(Color(0x88000000), Offset(inL + 6f * d, ly + 2f * d), Offset(inR - 6f * d, ly + 2f * d), strokeWidth = 2.4f * d)
+                        }
+                    }
+                    if (highlight) {
+                        drawRoundRect(
+                            DropCyan.copy(alpha = 0.9f),
+                            topLeft = Offset(inL, inT),
+                            size = Size(inR - inL, inB - inT),
+                            cornerRadius = CornerRadius(12f * d),
+                            style = Stroke(width = 3f * d),
+                        )
+                    }
+                }
+            },
+    )
+}
+
+/** Le rebord avant du socle : il passe devant le bas des tuiles du niveau avant, comme si elles étaient posées dedans. */
+@Composable
+private fun RackLip(x: Float, y: Float, w: Float, h: Float, frontTop: Float) {
+    val density = LocalDensity.current
+    val d = density.density
+    val lipH = (h - frontTop).coerceAtLeast(10f * d)
+    Box(
+        Modifier
+            .zIndex(2.5f)
+            .offset { IntOffset(x.roundToInt(), (y + frontTop - 8f * d).roundToInt()) }
+            .size(with(density) { w.toDp() }, with(density) { (lipH + 8f * d + 9f * d).toDp() })
+            .drawBehind {
+                val top = 8f * d
+                // ombre portée du rebord sur les tuiles
+                drawRect(
+                    Brush.verticalGradient(listOf(Color(0x00000000), Color(0x55000000)), startY = 0f, endY = top),
+                    size = Size(size.width, top),
+                )
+                // dessus du rebord (éclairé)
+                drawRoundRect(
+                    Brush.verticalGradient(listOf(Color(0xFFF3DDB4), Color(0xFFE2BC86)), startY = top, endY = top + 7f * d),
+                    topLeft = Offset(5f * d, top),
+                    size = Size(size.width - 10f * d, 7f * d),
+                    cornerRadius = CornerRadius(3f * d),
+                )
+                // face avant du rebord, jusqu'au bas du socle
+                drawRoundRect(
+                    Brush.verticalGradient(listOf(Color(0xFFCB9A5E), Color(0xFFB07C45), Color(0xFF8A5B2E)), startY = top + 6f * d, endY = size.height),
+                    topLeft = Offset(0f, top + 6f * d),
+                    size = Size(size.width, size.height - top - 6f * d),
+                    cornerRadius = CornerRadius(14f * d),
+                )
+                drawLine(Color(0x55FFFFFF), Offset(8f * d, top + 7.5f * d), Offset(size.width - 8f * d, top + 7.5f * d), strokeWidth = 1.4f * d)
+            },
+    )
 }
 
 @Composable
@@ -834,31 +1009,26 @@ private fun InitialMeldChip(points: Int, threshold: Int, modifier: Modifier = Mo
     val ok = points >= threshold
     val fraction = (points.toFloat() / threshold).coerceIn(0f, 1f)
     val color = if (ok) ValidGreen else WarnAmber
-    Box(
+    androidx.compose.foundation.layout.Row(
         modifier
-            .background(Color(0xCC000000), RoundedCornerShape(14.dp))
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .size(width = 200.dp, height = 22.dp)
+            .background(Color(0xCC2B1808), RoundedCornerShape(11.dp)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
-        androidx.compose.foundation.layout.Column {
-            Text(
-                "Première pose  $points / $threshold",
-                color = color,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-            )
+        Text("1ère pose  $points / $threshold", color = color, fontSize = 12.sp, fontWeight = FontWeight.Black)
+        Box(
+            Modifier
+                .padding(start = 8.dp)
+                .size(width = 54.dp, height = 5.dp)
+                .background(Color(0x44FFFFFF), RoundedCornerShape(3.dp)),
+        ) {
             Box(
                 Modifier
-                    .padding(top = 3.dp)
-                    .size(width = 120.dp, height = 4.dp)
-                    .background(Color(0x44FFFFFF), RoundedCornerShape(2.dp)),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { transformOrigin = TransformOrigin(0f, 0.5f); scaleX = fraction }
-                        .background(color, RoundedCornerShape(2.dp)),
-                )
-            }
+                    .fillMaxSize()
+                    .graphicsLayer { transformOrigin = TransformOrigin(0f, 0.5f); scaleX = fraction }
+                    .background(color, RoundedCornerShape(3.dp)),
+            )
         }
     }
 }

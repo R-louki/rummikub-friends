@@ -109,7 +109,7 @@ private fun DrawScope.drawTile(tile: Tile, label: TextLayoutResult?, mark: TileM
     val w = size.width
     val h = size.height
     val r = w * 0.15f
-    val thick = h * 0.055f
+    val thick = h * 0.075f
     val faceH = h - thick
     val halo = markColor(mark)
 
@@ -120,6 +120,15 @@ private fun DrawScope.drawTile(tile: Tile, label: TextLayoutResult?, mark: TileM
             topLeft = Offset(-spread, -spread),
             size = Size(w + 2 * spread, h + 2 * spread),
             cornerRadius = CornerRadius(r + spread),
+        )
+    }
+    // ombre portée douce sur le support
+    for (i in 1..3) {
+        drawRoundRect(
+            color = Color.Black.copy(alpha = 0.10f),
+            topLeft = Offset(-w * 0.01f * i, thick + h * 0.012f * i),
+            size = Size(w + w * 0.02f * i, faceH),
+            cornerRadius = CornerRadius(r + w * 0.02f * i),
         )
     }
     // bord inférieur : épaisseur de la tuile
