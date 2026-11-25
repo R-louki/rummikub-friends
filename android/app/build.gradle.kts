@@ -45,8 +45,8 @@ android {
         applicationId = "com.rummikub.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "1.4.13"
+        versionCode = 27
+        versionName = "1.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

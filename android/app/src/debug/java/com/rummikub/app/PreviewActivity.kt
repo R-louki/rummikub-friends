@@ -89,6 +89,7 @@ private fun Preview(screen: String) {
                 )
             }
         }
+        "table", "table_full" -> TableDemo(full = screen == "table_full")
         "crop" -> {
             val bmp = android.graphics.Bitmap.createBitmap(800, 600, android.graphics.Bitmap.Config.ARGB_8888).also {
                 val c = android.graphics.Canvas(it)

@@ -37,10 +37,10 @@ import androidx.compose.ui.unit.sp
 import com.rummikub.app.audio.AndroidAudioBridge
 import com.rummikub.app.game.DropTarget
 import com.rummikub.app.game.TurnController
-import com.rummikub.app.ui.board.BoardGrid
+import com.rummikub.app.ui.table.RackToolbar
+import com.rummikub.app.ui.table.TableSurface
 import com.rummikub.app.ui.components.SynchronizedTimerView
 import com.rummikub.app.ui.dialogs.AudioSettingsHost
-import com.rummikub.app.ui.rack.PlayerRackView
 import com.rummikub.app.ui.theme.*
 import com.rummikub.core.audio.AudioController
 import com.rummikub.core.audio.VoiceChatMode
@@ -101,9 +101,6 @@ fun GameScreen(
     // Working (local, in-progress) state of the turn
     val workingBoard by turnController.board.collectAsState()
     val workingRack by turnController.rack.collectAsState()
-    val rackEpoch by turnController.rackEpoch.collectAsState()
-    val rackSortMode by turnController.rackSortMode.collectAsState()
-    var rackCollapsed by remember { mutableStateOf(false) }
     val selectedList by turnController.selectedTileIds.collectAsState()
     val selectedTileIds = remember(selectedList) { selectedList.toSet() }
     val newTileIds by turnController.newBoardTileIds.collectAsState()
@@ -207,18 +204,19 @@ fun GameScreen(
             // ==========================================
             Column(
                 modifier = Modifier
-                    .width(66.dp)
+                    .width(96.dp)
                     .fillMaxHeight()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 3.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(if (players.size >= 4) 1.dp else 6.dp)
             ) {
                 val totalMs = gameConfig.turnDurationSeconds * 1000f
                 players.forEach { player ->
                     val active = serverBoard.activePlayerId == player.id
                     RibbonPlayer(
                         player = player,
+                        compact = players.size >= 4,
                         isMe = player.id == myPlayerId,
                         isActiveTurn = active,
                         isSpeaking = speakingPlayers.contains(player.id) || (player.id == myPlayerId && isLocalSpeaking),
@@ -231,9 +229,9 @@ fun GameScreen(
             }
 
             // ==========================================
-            // CENTRE: the table (as large as possible) and the rack
+            // CENTRE: the table and the rack on ONE surface (animated tiles, live drop preview)
             // ==========================================
-            Column(
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
@@ -244,89 +242,102 @@ fun GameScreen(
                 // A hint only when it helps (no permanent status bar)
                 val hint: String? = when {
                     isGracePeriod -> statusText + (graceSeconds?.let { " ($it s)" } ?: "")
-                    !isMyTurn -> listOfNotNull(statusText, lastMove?.description).joinToString(" · ")
+                    !isMyTurn -> listOfNotNull(statusText, lastMove?.description).joinToString(" \u00b7 ")
                     summary.invalidMeldCount > 0 ||
                         (!hasMadeInitialMeld && gameConfig.initialMeldThreshold > 0) ||
                         selectedTileIds.isNotEmpty() -> statusText
                     else -> null
                 }
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    BoardGrid(
-                        boardState = shownBoard,
-                        isMyTurn = isMyTurn,
-                        newTileIds = newTileIds,
-                        selectedTileIds = selectedTileIds,
-                        placedByOthers = lastMove?.placed ?: emptySet(),
-                        movedByOthers = lastMove?.moved ?: emptySet(),
-                        initialMeldThreshold = if (hasMadeInitialMeld) 0 else gameConfig.initialMeldThreshold,
-                        onTileTapped = { tile -> turnController.toggleSelection(tile.id) },
-                        onTileDropped = { tileId, target ->
-                            turnController.dropTile(tileId, target)
-                        },
-                        onTargetTapped = { target ->
-                            if (turnController.sendSelectedTo(target)) {
-                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                            }
-                        },
-                        onSelectChain = { ids ->
-                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                            turnController.selectTiles(ids)
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    // The hint fades after a moment instead of staying over the table
-                    var hintVisible by remember { mutableStateOf(false) }
-                    LaunchedEffect(hint) {
-                        if (hint == null) { hintVisible = false } else { hintVisible = true; delay(2500); hintVisible = false }
-                    }
-                    if (hint != null && hintVisible) {
-                        Text(
-                            text = hint,
-                            color = statusColor,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 6.dp, start = 12.dp, end = 12.dp)
-                                .background(Color(0x77000000), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 10.dp, vertical = 3.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                PlayerRackView(
-                    rack = workingRack,
-                    layoutEpoch = rackEpoch,
-                    collapsed = rackCollapsed,
+                val canRedo by turnController.canRedo.collectAsState()
+                val rackIdsNow = workingRack.tiles.map { it.id }.toSet()
+                TableSurface(
+                    melds = shownBoard.melds,
+                    rackTiles = workingRack.tiles,
+                    isMyTurn = isMyTurn,
+                    hasMadeInitialMeld = hasMadeInitialMeld,
+                    initialThreshold = gameConfig.initialMeldThreshold,
+                    newMeldPoints = summary.newMeldPoints,
+                    newTileIds = newTileIds,
+                    selectedIds = selectedList,
+                    placedByOthers = lastMove?.placed ?: emptySet(),
+                    movedByOthers = lastMove?.moved ?: emptySet(),
                     drawnTileId = drawnTileId,
-                    sortMode = rackSortMode,
-                    onSelectTiles = { ids ->
+                    emptyText = when {
+                        !isMyTurn -> "En attente des coups des joueurs..."
+                        gameConfig.initialMeldThreshold > 0 && !hasMadeInitialMeld ->
+                            "Glissez vos tuiles ici, ou touchez-en une puis la table.\nDouble toucher : placement automatique. Première pose : ${gameConfig.initialMeldThreshold} pts minimum."
+                        else -> "Glissez vos tuiles ici, ou touchez-en une puis la table.\nDouble toucher : placement automatique."
+                    },
+                    onToggleSelect = { tile -> turnController.toggleSelection(tile.id) },
+                    onTapTarget = { target ->
+                        if (turnController.sendSelectedTo(target)) {
+                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        }
+                    },
+                    onDoubleTap = { tile ->
+                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                        if (isMyTurn) turnController.autoPlace(tile.id)
+                    },
+                    onSelectChain = { ids ->
                         view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         turnController.selectTiles(ids)
                     },
-                    onToggleCollapsed = { rackCollapsed = !rackCollapsed },
-                    onSortRuns = {
-                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        turnController.sortByRun()
+                    onDrop = { ids, primary, target, rackIndex ->
+                        if (target is DropTarget.Rack) {
+                            if (primary in rackIdsNow) {
+                                turnController.reorderRack(ids.filter { it in rackIdsNow }, rackIndex)
+                            } else {
+                                turnController.dropTile(primary, DropTarget.Rack)
+                                turnController.reorderRack(ids, rackIndex)
+                            }
+                        } else {
+                            turnController.dropTile(primary, target)
+                        }
                     },
-                    onSortGroups = {
-                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        turnController.sortByGroup()
+                    rackTools = {
+                        RackToolbar(
+                            canAct = isMyTurn && !actionInFlight,
+                            canRedo = isMyTurn && canRedo,
+                            onSortRuns = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                turnController.sortByRun()
+                            },
+                            onSortGroups = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                turnController.sortByGroup()
+                            },
+                            onSuggest = {
+                                view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                turnController.applySuggestion()
+                            },
+                            onRedo = {
+                                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                turnController.redoLast()
+                            }
+                        )
                     },
-                    isMyTurn = isMyTurn,
-                    selectedTileIds = selectedTileIds,
-                    onTileTapped = { tile ->
-                        turnController.toggleSelection(tile.id)
-                    },
-                    onTileDroppedOnRack = { tileId -> turnController.dropTile(tileId, DropTarget.Rack) },
-                    onRackTapped = {
-                        turnController.sendSelectedTo(DropTarget.Rack)
-                    }
+                    modifier = Modifier.fillMaxSize()
                 )
+                // The hint fades after a moment instead of staying over the table
+                var hintVisible by remember { mutableStateOf(false) }
+                LaunchedEffect(hint) {
+                    if (hint == null) { hintVisible = false } else { hintVisible = true; delay(2500); hintVisible = false }
+                }
+                if (hint != null && hintVisible) {
+                    Text(
+                        text = hint,
+                        color = statusColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 10.dp, start = 12.dp, end = 12.dp)
+                            .background(Color(0x99000000), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                }
             }
 
             // ==========================================
@@ -364,9 +375,18 @@ fun GameScreen(
                         if (turnController.hasValidPendingMoves()) turnController.notifyPendingMoves() else turnController.drawTile()
                     }
                     Text(
-                        text = "pioche ${serverBoard.drawPileCount}",
-                        color = Color(0xB3FFFFFF),
-                        fontSize = 8.sp,
+                        text = "${serverBoard.drawPileCount}",
+                        color = Color(0xFFFFE9B0),
+                        fontSize = 20.sp,
+                        lineHeight = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = "en pioche",
+                        color = Color(0xCCFFFFFF),
+                        fontSize = 10.sp,
+                        lineHeight = 11.sp,
                         maxLines = 1
                     )
                 }
@@ -557,7 +577,7 @@ fun GameScreen(
                     fontSize = 34.sp,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .offset(x = 70.dp, y = (70 + index * 100).dp - (40 * rise.value).dp)
+                        .offset(x = 100.dp, y = (70 + index * 100).dp - (40 * rise.value).dp)
                         .graphicsLayer {
                             alpha = (1f - rise.value * rise.value)
                             val sc = 0.6f + 0.6f * minOf(1f, rise.value * 4f)
@@ -643,6 +663,7 @@ private fun RoundAction(
 @Composable
 private fun RibbonPlayer(
     player: PlayerSummary,
+    compact: Boolean = false,
     isMe: Boolean,
     isActiveTurn: Boolean,
     isSpeaking: Boolean,
@@ -666,7 +687,7 @@ private fun RibbonPlayer(
             .padding(vertical = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(modifier = Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(if (compact) 42.dp else 50.dp), contentAlignment = Alignment.Center) {
             if (timerFraction != null) {
                 val ringColor = when {
                     timerFraction > 0.5f -> Color(0xFF69F0AE)
@@ -684,14 +705,14 @@ private fun RibbonPlayer(
             if (isSpeaking) {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(if (compact) 37.dp else 44.dp)
                         .clip(CircleShape)
                         .background(VadSpeakingHalo.copy(alpha = 0.35f))
                 )
             }
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(if (compact) 32.dp else 38.dp)
                     .clip(CircleShape)
                     .background(Brush.radialGradient(listOf(Color(0xFF5D4037), Color(0xFF3E2723))))
                     .border(if (isActiveTurn || isSpeaking) 2.5.dp else 1.dp, borderColor, CircleShape),
@@ -749,27 +770,37 @@ private fun RibbonPlayer(
                 )
             }
         }
+        val few = player.tileCount in 1..3
         Text(
-            text = if (isMe) "Moi" else player.name,
+            text = if (isMe) "Moi" else player.name.removeSuffix(" (ordi)"),
             color = if (isActiveTurn) Color(0xFFFFD54F) else Color.White,
-            fontSize = 9.sp,
-            fontWeight = if (isActiveTurn) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 14.sp,
+            lineHeight = 16.sp,
+            fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = if (secondsLeft != null) 9.dp else 2.dp)
+            modifier = Modifier.padding(top = if (secondsLeft != null) 9.dp else 2.dp, start = 2.dp, end = 2.dp)
         )
-        Text(
-            text = "${player.tileCount} tuiles",
-            color = if (player.isConnected) Color(0xFFD7CCC8) else StatusReconnecting,
-            fontSize = 8.sp,
-            maxLines = 1
-        )
-        if (player.totalScore != 0) {
+        // Number of tiles left: a pill with a little tile, orange when the player is about to win
+        Row(
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .background(if (few) Color(0xFFFF7043) else Color(0x66000000), RoundedCornerShape(12.dp))
+                .padding(horizontal = 9.dp, vertical = 1.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 10.dp, height = 14.dp)
+                    .background(Color(0xFFF6EFD8), RoundedCornerShape(2.dp))
+            )
             Text(
-                text = "Σ ${player.totalScore} pts",
-                color = if (player.totalScore > 0) Color(0xFF69F0AE) else Color(0xFFFF8A80),
-                fontSize = 8.sp,
-                fontWeight = FontWeight.Bold
+                text = "${player.tileCount}",
+                color = if (!player.isConnected) StatusReconnecting else if (few) Color.White else Color(0xFFFFE9B0),
+                fontSize = 18.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.padding(start = 6.dp)
             )
         }
     }

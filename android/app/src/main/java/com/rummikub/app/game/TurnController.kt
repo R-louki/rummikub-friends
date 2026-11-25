@@ -1,6 +1,7 @@
 package com.rummikub.app.game
 
 import com.rummikub.core.engine.BoardValidator
+import com.rummikub.core.engine.MoveAssistant
 import com.rummikub.core.model.BoardState
 import com.rummikub.core.model.MeldSet
 import com.rummikub.core.model.PlayerRack
@@ -76,19 +77,58 @@ class TurnController(
     private val _canUndo = MutableStateFlow(false)
     val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
 
+    /** States taken back with "undo", so that "redo" can bring them back. */
+    private val redoHistory = ArrayDeque<Pair<BoardState, PlayerRack>>()
+    private val _canRedo = MutableStateFlow(false)
+    val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+
     private fun clearHistory() {
         history.clear()
+        redoHistory.clear()
         _canUndo.value = false
+        _canRedo.value = false
     }
 
     /** Takes back only the last tile move of this turn (the other moves stay). */
     fun undoLast() {
         val previous = history.removeLastOrNull() ?: return
+        redoHistory.addLast(_board.value to _rack.value)
         _board.value = previous.first
         _rack.value = previous.second
         _selectedTileIds.value = emptyList()
         broadcastWorkingBoard()
         _canUndo.value = history.isNotEmpty()
+        _canRedo.value = true
+    }
+
+    /** Brings back the move that was just taken back. */
+    fun redoLast() {
+        val next = redoHistory.removeLastOrNull() ?: return
+        history.addLast(_board.value to _rack.value)
+        _board.value = next.first
+        _rack.value = next.second
+        _selectedTileIds.value = emptyList()
+        broadcastWorkingBoard()
+        _canUndo.value = true
+        _canRedo.value = redoHistory.isNotEmpty()
+    }
+
+    /** Moves rack tiles to [index] in the rack. The rack order is local and never part of the turn. */
+    fun reorderRack(tileIds: List<String>, index: Int) {
+        val rack = _rack.value
+        val movingIds = tileIds.toSet()
+        val movingTiles = tileIds.mapNotNull { id -> rack.tiles.firstOrNull { it.id == id } }
+        if (movingTiles.isEmpty()) return
+        val rest = rack.tiles.filterNot { it.id in movingIds }
+        // [index] counts positions in the rack WITHOUT the moving tiles
+        val at = index.coerceIn(0, rest.size)
+        val ordered = rest.take(at) + movingTiles + rest.drop(at)
+        _rack.value = rack.copy(tiles = ordered)
+        val order = ordered.map { it.id }
+        snapshotRack = snapshotRack.copy(
+            tiles = snapshotRack.tiles.sortedBy { t -> order.indexOf(t.id).let { if (it < 0) Int.MAX_VALUE else it } }
+        )
+        _selectedTileIds.value = _selectedTileIds.value - movingIds
     }
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -282,8 +322,18 @@ class TurnController(
             DropTarget.NewMeld -> melds = melds + MeldSet(tiles = listOf(tile))
             is DropTarget.MeldPosition -> {
                 val idx = melds.indexOfFirst { it.id == target.meldId }
+                val strategy = repository.gameConfig.value.jokerPointStrategy
+                val swapAt = if (idx >= 0) MoveAssistant.jokerSwapPosition(melds[idx], tile, strategy) else null
                 melds = if (idx < 0) {
                     melds + MeldSet(tiles = listOf(tile))
+                } else if (swapAt != null) {
+                    // The tile takes the joker's place; the joker comes out as a new piece to play again this turn
+                    val m = melds[idx]
+                    val joker = m.tiles[swapAt]
+                    _messages.tryEmit("Joker récupéré : rejouez-le avant de valider.")
+                    melds.toMutableList().also {
+                        it[idx] = m.copy(tiles = m.tiles.toMutableList().also { l -> l[swapAt] = tile })
+                    } + MeldSet(tiles = listOf(joker))
                 } else if (!fitsMeld(melds[idx], tile) || (tile.isJoker && jokerSlot(melds[idx], target.index) == null)) {
                     // Poka-yoke: a tile that cannot belong to this combination is never forced into it
                     _messages.tryEmit("Cette tuile ne va pas avec cette combinaison : posée à part.")
@@ -405,6 +455,8 @@ class TurnController(
     private fun commitWorkingState(board: BoardState, rack: PlayerRack, movedTileId: String) {
         history.addLast(_board.value to _rack.value)
         if (history.size > 60) history.removeFirst()
+        redoHistory.clear()
+        _canRedo.value = false
         _canUndo.value = true
         _board.value = board.copy(melds = board.melds.filter { it.isNotEmpty })
         broadcastWorkingBoard()
@@ -454,6 +506,60 @@ class TurnController(
             }
         }
         return result
+    }
+
+    // ==========================================
+    // ASSISTANCE
+    // ==========================================
+
+    /**
+     * Double tap on a rack tile: it goes where it obviously belongs.
+     * 1. extends a combination of the table (only once the first meld has been made),
+     * 2. otherwise forms a new combination with two matching tiles of the rack,
+     * 3. otherwise says so.
+     */
+    fun autoPlace(tileId: String) {
+        val rack = _rack.value
+        val tile = rack.tiles.firstOrNull { it.id == tileId } ?: return
+        val strategy = repository.gameConfig.value.jokerPointStrategy
+        if (rack.hasMadeInitialMeld) {
+            val place = MoveAssistant.bestPlaceOnTable(_board.value.melds, tile, strategy)
+            if (place != null) {
+                moveTile(tileId, DropTarget.MeldPosition(place.first, place.second))
+                return
+            }
+        }
+        val mates = MoveAssistant.companionsFor(tile, rack.tiles)
+        if (mates != null) {
+            moveTiles(listOf(tileId) + mates.map { it.id }, DropTarget.NewMeld)
+            return
+        }
+        _messages.tryEmit("Cette tuile ne s'assemble avec rien de visible pour l'instant.")
+    }
+
+    /**
+     * "Suggestion": lays down the best move found for the rack as it was at the start of the turn.
+     * The player can still adjust it, or take it back with undo.
+     */
+    fun applySuggestion() {
+        val config = repository.gameConfig.value
+        val threshold = config.initialMeldThreshold
+        val s = MoveAssistant.suggest(
+            board = snapshotBoard.melds,
+            rack = snapshotRack.tiles,
+            hasMadeInitialMeld = snapshotRack.hasMadeInitialMeld || threshold <= 0,
+            threshold = threshold,
+            strategy = config.jokerPointStrategy
+        )
+        if (s == null) {
+            _messages.tryEmit(
+                if (!snapshotRack.hasMadeInitialMeld && threshold > 0) "Aucune première pose de $threshold pts possible : piochez."
+                else "Aucun coup possible avec ces tuiles : piochez."
+            )
+            return
+        }
+        commitWorkingState(snapshotBoard.copy(melds = s.melds), snapshotRack.copy(tiles = s.rack), "")
+        _messages.tryEmit("Suggestion : ${s.tilesPlayed} tuile(s), ${s.points} pts. Validez ✓ ou ajustez.")
     }
 
     // ==========================================
