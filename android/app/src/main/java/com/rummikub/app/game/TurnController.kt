@@ -468,45 +468,8 @@ class TurnController(
      * Removes [tileId] from [meld]. If the tile sits in the middle, the meld is split in two:
      * the left part keeps the original id, the right part gets a new one.
      */
-    private fun removeTileSplitting(melds: List<MeldSet>, meld: MeldSet, tileId: String): List<MeldSet> {
-        val i = meld.tiles.indexOfFirst { it.id == tileId }
-        if (i < 0) return melds
-        val left = meld.tiles.subList(0, i).toList()
-        val right = meld.tiles.subList(i + 1, meld.tiles.size).toList()
-
-        // A group (same number, different colours): the remaining tiles simply stay together.
-        // Only a run is cut in two when a tile is taken from its middle.
-        val numbered = meld.tiles.filterNot { it.isJoker }
-        val isGroup = numbered.size >= 2 && numbered.map { it.number }.distinct().size == 1
-        if (isGroup) {
-            val rest = left + right
-            return melds.mapNotNull { m ->
-                when {
-                    m.id != meld.id -> m
-                    rest.isEmpty() -> null
-                    else -> m.copy(tiles = rest)
-                }
-            }
-        }
-
-        val result = ArrayList<MeldSet>(melds.size + 1)
-        for (m in melds) {
-            if (m.id != meld.id) {
-                result += m
-                continue
-            }
-            when {
-                left.isEmpty() && right.isEmpty() -> Unit
-                left.isEmpty() -> result += m.copy(tiles = right)
-                right.isEmpty() -> result += m.copy(tiles = left)
-                else -> {
-                    result += m.copy(tiles = left)
-                    result += MeldSet(tiles = right, gridRow = m.gridRow, gridCol = m.gridCol)
-                }
-            }
-        }
-        return result
-    }
+    private fun removeTileSplitting(melds: List<MeldSet>, meld: MeldSet, tileId: String): List<MeldSet> =
+        MoveAssistant.removeTileSplitting(melds, meld, tileId)
 
     // ==========================================
     // ASSISTANCE

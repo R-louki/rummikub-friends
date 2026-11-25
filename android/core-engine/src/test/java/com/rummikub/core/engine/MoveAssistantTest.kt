@@ -106,4 +106,41 @@ class MoveAssistantTest {
         assertEquals(2, MoveAssistant.jokerSwapPosition(group, t(TileColor.RED, 7)))
         assertNull(MoveAssistant.jokerSwapPosition(group, t(TileColor.BLACK, 7)))
     }
+
+    @Test
+    fun `prendre une tuile d'un groupe de quatre laisse un groupe de trois d'un seul tenant`() {
+        val group = MeldSet(id = "g", tiles = TileColor.values().map { t(it, 2) })
+        val out = MoveAssistant.removeTileSplitting(listOf(group), group, group.tiles[1].id)
+        assertEquals(1, out.size)
+        assertEquals(3, out[0].tiles.size)
+        assertTrue(BoardValidator.validateMeld(out[0]).isValid)
+        assertEquals("g", out[0].id)
+    }
+
+    @Test
+    fun `prendre deux tuiles d'un groupe de quatre laisse un reste incomplet mais entier`() {
+        val group = MeldSet(id = "g", tiles = TileColor.values().map { t(it, 2) })
+        val one = MoveAssistant.removeTileSplitting(listOf(group), group, group.tiles[0].id)
+        val two = MoveAssistant.removeTileSplitting(one, one[0], one[0].tiles[0].id)
+        assertEquals(1, two.size)
+        assertEquals(2, two[0].tiles.size)
+    }
+
+    @Test
+    fun `prendre la tuile du milieu d'une suite la coupe en deux, une extremite ne la coupe pas`() {
+        val run = MeldSet(id = "r", tiles = (3..8).map { t(TileColor.BLUE, it) })
+        val middle = MoveAssistant.removeTileSplitting(listOf(run), run, run.tiles[2].id)
+        assertEquals(listOf(2, 3), middle.map { it.tiles.size })
+        val end = MoveAssistant.removeTileSplitting(listOf(run), run, run.tiles.last().id)
+        assertEquals(1, end.size)
+        assertEquals(5, end[0].tiles.size)
+        val first = MoveAssistant.removeTileSplitting(listOf(run), run, run.tiles.first().id)
+        assertEquals(1, first.size)
+    }
+
+    @Test
+    fun `prendre la derniere tuile d'une combinaison la fait disparaitre`() {
+        val single = MeldSet(id = "s", tiles = listOf(t(TileColor.RED, 5)))
+        assertTrue(MoveAssistant.removeTileSplitting(listOf(single), single, single.tiles[0].id).isEmpty())
+    }
 }
